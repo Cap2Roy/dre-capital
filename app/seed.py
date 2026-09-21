@@ -224,8 +224,10 @@ def run() -> None:
         db.close()
 
 def ensure_admin() -> None:
-    """Production helper: create default admin user if none exist.
-    Reads ADMIN_EMAIL and ADMIN_PASSWORD env vars (defaults: admin@dre-capital.com / capital2026).
+    """Production helper: create default users + demo data if DB is empty.
+
+    Creates admin + acquisitions operator users (if not present), then seeds
+    demo leads/lists/buyers/contracts if the DB has no leads at all.
     Called by Dockerfile on container startup.
     """
     import os
@@ -233,21 +235,41 @@ def ensure_admin() -> None:
 
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(User.role == "admin").first()
-        if existing:
-            return  # admin already exists
+        # Create admin if missing
+        admin = db.query(User).filter(User.role == "admin").first()
+        if not admin:
+            email = os.getenv("ADMIN_EMAIL", "admin@dre-capital.com")
+            password = os.getenv("ADMIN_PASSWORD", "capital2026")
+            admin = User(
+                email=email,
+                name="Acquisitions Admin",
+                role="admin",
+                password_hash=hash_password(password),
+            )
+            db.add(admin)
+            db.commit()
+            print(f"Created default admin: {email}")
 
-        email = os.getenv("ADMIN_EMAIL", "admin@dre-capital.com")
-        password = os.getenv("ADMIN_PASSWORD", "capital2026")
-        admin = User(
-            email=email,
-            name="Acquisitions Admin",
-            role="admin",
-            password_hash=hash_password(password),
-        )
-        db.add(admin)
-        db.commit()
-        print(f"Created default admin: {email}")
+        # Create acquisitions operator if missing
+        ops = db.query(User).filter(User.role == "acquisitions").first()
+        if not ops:
+            ops = User(
+                email="ops@dre-capital.com",
+                name="Field Operator",
+                role="acquisitions",
+                password_hash=hash_password("capital2026"),
+            )
+            db.add(ops)
+            db.commit()
+            print("Created default acquisitions operator: ops@dre-capital.com")
+
+        # Seed demo data if DB is empty
+        lead_count = db.query(Lead).count()
+        if lead_count == 0:
+            print("DB has no leads — seeding demo data...")
+            db.close()
+            run()
+            return
     finally:
         db.close()
 
