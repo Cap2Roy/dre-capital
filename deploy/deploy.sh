@@ -62,6 +62,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars "DATABASE_URL=sqlite:///./dre_capital.db" \
   --set-env-vars "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}" \
   --set-env-vars "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}" \
+  --set-env-vars "LLM_API_KEY=${LLM_API_KEY:-}" \
+  --set-env-vars "LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}" \
+  --set-env-vars "LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}" \
   --project "$PROJECT_ID" --quiet
 
 # ── Done ─────────────────────────────────────────────────────
