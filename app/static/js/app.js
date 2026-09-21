@@ -26,6 +26,22 @@ const API = {
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
+  async put(path, body) {
+    const r = await fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401) { window.location.href = "/login"; return; }
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  },
+  async delete(path) {
+    const r = await fetch(path, { method: "DELETE" });
+    if (r.status === 401) { window.location.href = "/login"; return; }
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  },
   async upload(path, formData) {
     const r = await fetch(path, { method: "POST", body: formData });
     if (r.status === 401) { window.location.href = "/login"; return; }

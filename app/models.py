@@ -323,3 +323,19 @@ class Contract(TimestampMixin, Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
     lead: Mapped["Lead"] = relationship(back_populates="contracts")
     buyer: Mapped[Optional["Buyer"]] = relationship(back_populates="contracts")
+
+# ── Settings (key-value store for API keys, call cadence, etc.) ──────────────
+
+class Setting(TimestampMixin, Base):
+    """Application-level key-value settings (API keys, cadence overrides, etc.).
+
+    Keys that end in '_key', '_token', '_sid', '_password' are treated as secrets
+    — masked in API responses.
+    """
+    __tablename__ = "settings"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str] = mapped_column(String(64), default="general")
+    label: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

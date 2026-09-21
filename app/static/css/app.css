@@ -588,6 +588,30 @@ table.data-table {
 .profile-name { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--navy-900); }
 .profile-email { font-size: var(--fs-sm); color: var(--text-2); margin-bottom: var(--sp-2); }
 
+/* ── Settings tabs ──────────────────────────────────────────── */
+
+.settings-tabs {
+  display: flex; gap: var(--sp-1); border-bottom: 2px solid var(--border);
+  margin-bottom: var(--sp-5); flex-wrap: wrap;
+}
+.settings-tab {
+  padding: var(--sp-3) var(--sp-5); border: none; background: transparent;
+  font-size: var(--fs-md); font-weight: var(--fw-med); color: var(--text-2);
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: all var(--transition); border-radius: var(--r-sm) var(--r-sm) 0 0;
+}
+.settings-tab:hover { color: var(--navy-600); background: var(--surface-2); }
+.settings-tab.active { color: var(--navy-700); border-bottom-color: var(--gold-500); font-weight: var(--fw-semi); }
+
+.settings-panel { display: none; animation: fadeIn 0.2s ease; }
+.settings-panel.active { display: block; }
+
+/* ── Form hints ─────────────────────────────────────────────── */
+
+.form-hint {
+  font-size: var(--fs-xs); color: var(--text-3); margin-top: var(--sp-1);
+  line-height: 1.4;
+}
 /* ── Responsive ─────────────────────────────────────────────── */
 
 @media (max-width: 1024px) {

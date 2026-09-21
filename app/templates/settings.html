@@ -3,48 +3,225 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">Settings &amp; Users</div>
-    <div class="page-subtitle">Manage your account and team members.</div>
+    <div class="page-title">Settings</div>
+    <div class="page-subtitle">Manage your account, team, calling services, and call flow.</div>
   </div>
 </div>
 
-<div class="grid-2">
-  <!-- Profile -->
-  <div class="card">
-    <div class="card-header">Your Profile</div>
-    <div class="card-body">
-      <div class="profile-info">
-        <div class="avatar avatar-lg">{{ user_initials }}</div>
-        <div>
-          <div class="profile-name">{{ user_name }}</div>
-          <div class="profile-email">{{ user_email }}</div>
-          <span class="badge badge-{% if is_admin %}gold{% else %}info{% endif %}">{{ user_role|capitalize }}</span>
+<!-- Tab navigation -->
+<div class="settings-tabs">
+  <button class="settings-tab active" data-tab="profile" onclick="switchTab('profile')">Profile</button>
+  <button class="settings-tab" data-tab="calling" onclick="switchTab('calling')">Calling &amp; API Keys</button>
+  <button class="settings-tab" data-tab="cadence" onclick="switchTab('cadence')">Call Follow-up</button>
+  {% if is_admin %}<button class="settings-tab" data-tab="team" onclick="switchTab('team')">Team Members</button>{% endif %}
+</div>
+
+<!-- ── Profile Tab ────────────────────────────────────────────── -->
+<div class="settings-panel active" id="tab-profile">
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">Your Profile</div>
+      <div class="card-body">
+        <div class="profile-info">
+          <div class="avatar avatar-lg">{{ user_initials }}</div>
+          <div>
+            <div class="profile-name">{{ user_name }}</div>
+            <div class="profile-email">{{ user_email }}</div>
+            <span class="badge badge-{% if is_admin %}gold{% else %}info{% endif %}">{{ user_role|capitalize }}</span>
+          </div>
         </div>
+        <hr class="divider">
+        <form id="profile-form" class="form">
+          <div class="form-group">
+            <label class="form-label" for="profile-name">Display Name</label>
+            <input type="text" id="profile-name" class="form-input" value="{{ user_name }}">
+          </div>
+          <button type="submit" class="btn btn-primary">Save Name</button>
+        </form>
       </div>
-      <hr class="divider">
-      <form id="profile-form" class="form">
-        <div class="form-group">
-          <label class="form-label" for="profile-name">Display Name</label>
-          <input type="text" id="profile-name" class="form-input" value="{{ user_name }}">
+    </div>
+
+    <div class="card">
+      <div class="card-header">Change Password</div>
+      <div class="card-body">
+        <form id="password-form" class="form">
+          <div class="form-group">
+            <label class="form-label" for="current-pw">Current Password</label>
+            <input type="password" id="current-pw" class="form-input" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="new-pw">New Password</label>
+            <input type="password" id="new-pw" class="form-input" required minlength="8">
+            <div class="form-hint">Minimum 8 characters.</div>
+          </div>
+          <button type="submit" class="btn btn-outline">Change Password</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Calling & API Keys Tab ─────────────────────────────────── -->
+<div class="settings-panel" id="tab-calling">
+  <div class="card mb-4">
+    <div class="card-header">
+      Twilio Configuration
+      <span id="twilio-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        Enter your Twilio credentials to enable click-to-call. Calls bridge your phone to the
+        seller — manual-dial only, no autodialer. Keys are stored encrypted in the database and
+        masked on read-back.
+      </p>
+      <form id="twilio-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="twilio-sid">Account SID</label>
+            <input type="text" id="twilio-sid" class="form-input" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="twilio-token">Auth Token</label>
+            <input type="password" id="twilio-token" class="form-input" placeholder="••••••••">
+          </div>
         </div>
-        <button type="submit" class="btn btn-primary">Save Name</button>
-      </form>
-      <hr class="divider">
-      <form id="password-form" class="form">
-        <div class="form-group">
-          <label class="form-label" for="current-pw">Current Password</label>
-          <input type="password" id="current-pw" class="form-input" required>
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="twilio-from">From Number (E.164)</label>
+            <input type="text" id="twilio-from" class="form-input" placeholder="+12125551234">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="operator-num">Default Operator Number</label>
+            <input type="text" id="operator-num" class="form-input" placeholder="+12125556789">
+            <div class="form-hint">Pre-fills the operator number when placing calls.</div>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="new-pw">New Password</label>
-          <input type="password" id="new-pw" class="form-input" required minlength="8">
-        </div>
-        <button type="submit" class="btn btn-outline">Change Password</button>
+        <button type="submit" class="btn btn-primary">Save Twilio Settings</button>
       </form>
     </div>
   </div>
 
-  <!-- Team management (admin only) -->
+  <div class="card mb-4">
+    <div class="card-header">
+      Skip Trace Provider
+      <span id="skiptrace-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <form id="skiptrace-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="skiptrace-provider">Provider</label>
+            <input type="text" id="skiptrace-provider" class="form-input" placeholder="mock">
+            <div class="form-hint">Use 'mock' for development — returns random numbers.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="skiptrace-key">API Key</label>
+            <input type="password" id="skiptrace-key" class="form-input" placeholder="••••••••">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Skip Trace Settings</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      Comps &amp; Valuation Provider
+      <span id="comps-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <form id="comps-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="comps-provider">Provider</label>
+            <input type="text" id="comps-provider" class="form-input" placeholder="mock">
+            <div class="form-hint">Use 'mock' for development — generates plausible comps.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="comps-key">API Key</label>
+            <input type="password" id="comps-key" class="form-input" placeholder="••••••••">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Comps Settings</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Call Follow-up Tab ─────────────────────────────────────── -->
+<div class="settings-panel" id="tab-cadence">
+  <div class="card mb-4">
+    <div class="card-header">Call Follow-up Cadence</div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        Configure how many days to wait before following up after each call outcome.
+        "Most deals close after touch 5" — keep cadence tight for live leads.
+      </p>
+      <form id="cadence-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="cad-no-answer">No Answer (days)</label>
+            <input type="number" id="cad-no-answer" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-voicemail">Voicemail (days)</label>
+            <input type="number" id="cad-voicemail" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-not-interested">Not Interested (days)</label>
+            <input type="number" id="cad-not-interested" class="form-input" min="0" max="365">
+            <div class="form-hint">Long cool-down — 90 days by default.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-callback">Callback Requested (days)</label>
+            <input type="number" id="cad-callback" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-warm">Warm Lead (days)</label>
+            <input type="number" id="cad-warm" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-offer">Offer Sent (days)</label>
+            <input type="number" id="cad-offer" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-dnc">DNC Request (days, 0 = none)</label>
+            <input type="number" id="cad-dnc" class="form-input" min="0" max="365">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cad-default">Default Fallback (days)</label>
+            <input type="number" id="cad-default" class="form-input" min="0" max="365">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Cadence</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Call Outcome → Lead Status Mapping</div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        When a call is logged, the lead status updates automatically based on the outcome.
+      </p>
+      <table class="data-table">
+        <thead><tr><th>Call Outcome</th><th>Lead Status Update</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Verbal Yes</td><td><span class="badge badge-success">Warm</span></td><td class="text-sm text-muted">Comp and send offer within 24h</td></tr>
+          <tr><td>Warm</td><td><span class="badge badge-warning">Warm</span></td><td class="text-sm text-muted">Follow up next day</td></tr>
+          <tr><td>Offer Sent</td><td><span class="badge badge-info">Working</span></td><td class="text-sm text-muted">Track offer response</td></tr>
+          <tr><td>Not Interested</td><td><span class="badge badge-info">Working</span></td><td class="text-sm text-muted">Long cool-down before re-contact</td></tr>
+          <tr><td>DNC Request</td><td><span class="badge badge-danger">Opted Out</span></td><td class="text-sm text-muted">Phone immediately opted out — mail only</td></tr>
+          <tr><td>Wrong Number</td><td><span class="badge badge-neutral">No change</span></td><td class="text-sm text-muted">No follow-up scheduled</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Team Members Tab (admin only) ──────────────────────────── -->
+{% if is_admin %}
+<div class="settings-panel" id="tab-team">
   <div class="card">
     <div class="card-header">
       Team Members
@@ -55,10 +232,22 @@
     </div>
   </div>
 </div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+// ── Tab switching ─────────────────────────────────────────────
+function switchTab(tabName) {
+  document.querySelectorAll(".settings-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".settings-panel").forEach(p => p.classList.remove("active"));
+  const tab = document.querySelector(`.settings-tab[data-tab="${tabName}"]`);
+  const panel = document.getElementById(`tab-${tabName}`);
+  if (tab) tab.classList.add("active");
+  if (panel) panel.classList.add("active");
+}
+
 // ── Profile ──────────────────────────────────────────────────
 document.getElementById("profile-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -81,6 +270,131 @@ document.getElementById("password-form").addEventListener("submit", async (e) =>
     document.getElementById("password-form").reset();
   } catch (err) { toast("Error: " + err.message, "error"); }
 });
+
+// ── Settings (API keys + cadence) ─────────────────────────────
+let _settingsData = [];
+
+async function loadSettings() {
+  try {
+    _settingsData = await API.get("/api/settings");
+    populateTwilioForm();
+    populateSkipTraceForm();
+    populateCompsForm();
+    populateCadenceForm();
+    updateStatusBadges();
+  } catch (err) {
+    // Non-admin — hide calling/cadence tabs if 403
+    if (err.message.includes("403") || err.message.includes("401")) {
+      document.querySelectorAll('.settings-tab[data-tab="calling"], .settings-tab[data-tab="cadence"]').forEach(t => t.remove());
+      document.querySelectorAll('#tab-calling, #tab-cadence').forEach(p => p.remove());
+    } else {
+      toast("Error loading settings: " + err.message, "error");
+    }
+  }
+}
+
+function getVal(key) {
+  const s = _settingsData.find(x => x.key === key);
+  return s ? s.value : "";
+}
+function isSet(key) {
+  const s = _settingsData.find(x => x.key === key);
+  return s ? s.is_set : false;
+}
+
+function populateTwilioForm() {
+  document.getElementById("twilio-sid").value = getVal("twilio_account_sid");
+  document.getElementById("twilio-token").value = getVal("twilio_auth_token");
+  document.getElementById("twilio-from").value = getVal("twilio_from_number");
+  document.getElementById("operator-num").value = getVal("operator_number");
+}
+
+function populateSkipTraceForm() {
+  document.getElementById("skiptrace-provider").value = getVal("skiptrace_provider");
+  document.getElementById("skiptrace-key").value = getVal("skiptrace_api_key");
+}
+
+function populateCompsForm() {
+  document.getElementById("comps-provider").value = getVal("comps_provider");
+  document.getElementById("comps-key").value = getVal("comps_api_key");
+}
+
+function populateCadenceForm() {
+  document.getElementById("cad-no-answer").value = getVal("cadence_no_answer") || 3;
+  document.getElementById("cad-voicemail").value = getVal("cadence_voicemail") || 5;
+  document.getElementById("cad-not-interested").value = getVal("cadence_not_interested") || 90;
+  document.getElementById("cad-callback").value = getVal("cadence_callback_requested") || 7;
+  document.getElementById("cad-warm").value = getVal("cadence_warm") || 1;
+  document.getElementById("cad-offer").value = getVal("cadence_offer_sent") || 3;
+  document.getElementById("cad-dnc").value = getVal("cadence_dnc_request") || 0;
+  document.getElementById("cad-default").value = getVal("cadence_default") || 14;
+}
+
+function updateStatusBadges() {
+  const twilioOk = isSet("twilio_account_sid") && isSet("twilio_auth_token") && isSet("twilio_from_number");
+  const stBadge = document.getElementById("twilio-status");
+  stBadge.className = `badge ${twilioOk ? "badge-success" : "badge-warning"}`;
+  stBadge.textContent = twilioOk ? "✓ Configured" : "⚠ Not Configured";
+
+  const stOk = isSet("skiptrace_api_key") || getVal("skiptrace_provider") === "mock";
+  const stBadge2 = document.getElementById("skiptrace-status");
+  stBadge2.className = `badge ${stOk ? "badge-success" : "badge-warning"}`;
+  stBadge2.textContent = stOk ? "✓ Active" : "⚠ Not Configured";
+
+  const compOk = isSet("comps_api_key") || getVal("comps_provider") === "mock";
+  const compBadge = document.getElementById("comps-status");
+  compBadge.className = `badge ${compOk ? "badge-success" : "badge-warning"}`;
+  compBadge.textContent = compOk ? "✓ Active" : "⚠ Not Configured";
+}
+
+// ── Save handlers ─────────────────────────────────────────────
+document.getElementById("twilio-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "twilio_account_sid", value: document.getElementById("twilio-sid").value },
+    { key: "twilio_auth_token", value: document.getElementById("twilio-token").value },
+    { key: "twilio_from_number", value: document.getElementById("twilio-from").value },
+    { key: "operator_number", value: document.getElementById("operator-num").value },
+  ], "Twilio settings saved");
+});
+
+document.getElementById("skiptrace-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "skiptrace_provider", value: document.getElementById("skiptrace-provider").value },
+    { key: "skiptrace_api_key", value: document.getElementById("skiptrace-key").value },
+  ], "Skip trace settings saved");
+});
+
+document.getElementById("comps-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "comps_provider", value: document.getElementById("comps-provider").value },
+    { key: "comps_api_key", value: document.getElementById("comps-key").value },
+  ], "Comps settings saved");
+});
+
+document.getElementById("cadence-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "cadence_no_answer", value: document.getElementById("cad-no-answer").value },
+    { key: "cadence_voicemail", value: document.getElementById("cad-voicemail").value },
+    { key: "cadence_not_interested", value: document.getElementById("cad-not-interested").value },
+    { key: "cadence_callback_requested", value: document.getElementById("cad-callback").value },
+    { key: "cadence_warm", value: document.getElementById("cad-warm").value },
+    { key: "cadence_offer_sent", value: document.getElementById("cad-offer").value },
+    { key: "cadence_dnc_request", value: document.getElementById("cad-dnc").value },
+    { key: "cadence_default", value: document.getElementById("cad-default").value },
+  ], "Call cadence saved");
+});
+
+async function saveSettings(items, successMsg) {
+  try {
+    await API.put("/api/settings", { settings: items });
+    toast(successMsg, "success");
+    await loadSettings(); // refresh status badges
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
 
 // ── User management (admin) ──────────────────────────────────
 async function loadUsers() {
@@ -199,8 +513,10 @@ async function deactivateUser(id, name) {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 
-loadUsers();
+// ── Init ───────────────────────────────────────────────────────
+loadSettings();
+{% if is_admin %}loadUsers();{% endif %}
 </script>
 {% endblock %}

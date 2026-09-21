@@ -43,10 +43,17 @@ def initiate_call(
     settings = get_settings()
     call_sid: Optional[str] = None
 
-    if settings.twilio_configured:
+    # Read Twilio config from DB settings, fall back to env vars
+    from app.services.settings import get_twilio_config
+    twilio_cfg = get_twilio_config(db)
+    twilio_sid = twilio_cfg["account_sid"] or settings.twilio_account_sid
+    twilio_token = twilio_cfg["auth_token"] or settings.twilio_auth_token
+    twilio_from = twilio_cfg["from_number"] or settings.twilio_from_number
+
+    if twilio_sid and twilio_token and twilio_from:
         try:
             from twilio.rest import Client
-            client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+            client = Client(twilio_sid, twilio_token)
             # Bridge: operator answers first, then Twilio dials the seller.
             twiml = (
                 f"<Response>"
@@ -55,7 +62,7 @@ def initiate_call(
             )
             twilio_call = client.calls.create(
                 to=operator_number,
-                from_=settings.twilio_from_number,
+                from_=twilio_from,
                 twiml=twiml,
                 status_callback=f"{settings.app_base_url}/api/calls/twilio-status",
             )
@@ -123,18 +130,26 @@ def log_call_outcome(
         lead.status = LeadStatus.WORKING
 
     # Follow-up cadence: "Most deals close after touch 5."
-    if outcome not in (CallOutcome.VERBAL_YES, CallOutcome.WRONG_NUMBER):
-        days = {CallOutcome.NO_ANSWER: 3, CallOutcome.VOICEMAIL: 5,
-                CallOutcome.NOT_INTERESTED: 90, CallOutcome.CALLBACK_REQUESTED: 7,
-                CallOutcome.WARM: 1, CallOutcome.OFFER_SENT: 3,
-                CallOutcome.DNC_REQUEST: 0}.get(outcome, 14)
-        if days:
-            followup = FollowUp(
-                lead_id=lead.id,
-                due_at=datetime.now() + timedelta(days=days),
-                reason=f"Follow up after: {outcome.value}",
-            )
-            db.add(followup)
-            lead.next_followup = followup.due_at
+    # Cadence is configurable in Settings → Call Follow-up tab.
+    from app.services.settings import get_call_cadence
+    cadence = get_call_cadence(db)
+    _outcome_map = {
+        CallOutcome.NO_ANSWER: cadence["no_answer"],
+        CallOutcome.VOICEMAIL: cadence["voicemail"],
+        CallOutcome.NOT_INTERESTED: cadence["not_interested"],
+        CallOutcome.CALLBACK_REQUESTED: cadence["callback_requested"],
+        CallOutcome.WARM: cadence["warm"],
+        CallOutcome.OFFER_SENT: cadence["offer_sent"],
+        CallOutcome.DNC_REQUEST: cadence["dnc_request"],
+    }
+    days = _outcome_map.get(outcome, cadence["default"])
+    if days:
+        followup = FollowUp(
+            lead_id=lead.id,
+            due_at=datetime.now() + timedelta(days=days),
+            reason=f"Follow up after: {outcome.value}",
+        )
+        db.add(followup)
+        lead.next_followup = followup.due_at
     db.flush()
     return call

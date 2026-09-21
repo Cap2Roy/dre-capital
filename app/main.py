@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.database import init_db
 from app.routers import (
-    auth, buyers, calls, contracts, dashboard, importer, leads, users, valuation,
+    auth, buyers, calls, contracts, dashboard, importer, leads, settings, users, valuation,
 )
 
 # Paths that don't require authentication
@@ -39,7 +39,7 @@ app.mount("/static", StaticFiles(directory=str(_base / "static")), name="static"
 templates = Jinja2Templates(directory=str(_base / "templates"))
 
 # API routers
-for r in (auth, users, dashboard, leads, importer, valuation, calls, buyers, contracts):
+for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, buyers, contracts):
     app.include_router(r.router)
 
 
