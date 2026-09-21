@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Acquisitions Dashboard</div>
+    <div class="page-subtitle">Today's pipeline — run the loop in order.</div>
+  </div>
+  <a href="/queue" class="btn btn-gold">☎ Start Calling</a>
+</div>
+
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card"><div class="stat-icon" style="background:var(--info-bg);color:var(--info)">⌂</div>
+    <div class="stat-value" id="stat-total">—</div><div class="stat-label">Total Leads</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--warning-bg);color:var(--warning)">☻</div>
+    <div class="stat-value" id="stat-warm">—</div><div class="stat-label">Warm Leads</div>
+    <div class="stat-sub">Comp & send offer in 24h</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--success-bg);color:var(--success)">✎</div>
+    <div class="stat-value" id="stat-contract">—</div><div class="stat-label">Under Contract</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--tier-3-bg);color:var(--tier-3)">☰</div>
+    <div class="stat-value" id="stat-stack3">—</div><div class="stat-label">Call Today (3+ stacks)</div>
+    <div class="stat-sub">Highest priority</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--tier-2-bg);color:var(--tier-2)">☰</div>
+    <div class="stat-value" id="stat-stack2">—</div><div class="stat-label">This Week (2 stacks)</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--dnc-bg);color:var(--dnc)">⚠</div>
+    <div class="stat-value" id="stat-dnc">—</div><div class="stat-label">DNC Blocked</div>
+    <div class="stat-sub">Mail only — never call</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--navy-100);color:var(--navy-600)">☎</div>
+    <div class="stat-value" id="stat-calls">—</div><div class="stat-label">Calls Today</div></div>
+  <div class="stat-card"><div class="stat-icon" style="background:var(--navy-100);color:var(--navy-600)">⏰</div>
+    <div class="stat-value" id="stat-followups">—</div><div class="stat-label">Follow-ups Due</div></div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">Today's Call Queue <a href="/queue" class="btn btn-outline btn-sm">Open Queue →</a></div>
+    <div class="card-body" id="queue-preview">
+      <div class="empty-state"><div class="icon">☎</div>Loading call queue…</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">The Daily Loop</div>
+    <div class="card-body">
+      <ol style="padding-left:20px; line-height:2; color:var(--text-1); font-size:var(--fs-base)">
+        <li><strong>Refresh lists</strong> (30 min, before 9am) — pull county records, import, re-stack.</li>
+        <li><strong>Skip trace</strong> new records — get numbers before dialing.</li>
+        <li><strong>Call the top of the stack</strong> (9–5) — deepest stacks first. This is the job.</li>
+        <li><strong>Comp every warm lead</strong> the same day. Never let a warm lead sit overnight.</li>
+        <li><strong>Send the offer</strong> within 24 hours. Speed is most of your edge.</li>
+        <li><strong>Push signed contracts</strong> to buyers immediately. Day you sign, it goes out.</li>
+        <li><strong>Log everything</strong> as you go. If it's not in the CRM, it didn't happen.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-5">
+  <div class="card-header">Stack Depth Distribution</div>
+  <div class="card-body">
+    <div id="stack-dist" style="display:flex; gap:16px; align-items:flex-end; height:120px;">
+      <div style="flex:1; text-align:center">
+        <div style="background:var(--tier-3); height:100px; border-radius:6px 6px 0 0; display:flex; align-items:flex-start; justify-content:center; color:white; font-weight:bold; padding-top:8px;" id="bar-3">—</div>
+        <div class="text-sm text-muted mt-4">3+ lists (Today)</div>
+      </div>
+      <div style="flex:1; text-align:center">
+        <div style="background:var(--tier-2); height:60px; border-radius:6px 6px 0 0; display:flex; align-items:flex-start; justify-content:center; color:white; font-weight:bold; padding-top:8px;" id="bar-2">—</div>
+        <div class="text-sm text-muted mt-4">2 lists (This week)</div>
+      </div>
+      <div style="flex:1; text-align:center">
+        <div style="background:var(--tier-1); height:30px; border-radius:6px 6px 0 0; display:flex; align-items:flex-start; justify-content:center; color:white; font-weight:bold; padding-top:8px;" id="bar-1">—</div>
+        <div class="text-sm text-muted mt-4">1 list (Mail only)</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async () => {
+  try {
+    const stats = await API.get("/api/dashboard");
+    document.getElementById("stat-total").textContent = stats.total_leads;
+    document.getElementById("stat-warm").textContent = stats.warm_leads;
+    document.getElementById("stat-contract").textContent = stats.under_contract;
+    document.getElementById("stat-stack3").textContent = stats.stack_today;
+    document.getElementById("stat-stack2").textContent = stats.stack_this_week;
+    document.getElementById("stat-dnc").textContent = stats.dnc_blocked;
+    document.getElementById("stat-calls").textContent = stats.calls_today;
+    document.getElementById("stat-followups").textContent = stats.followups_today;
+    document.getElementById("bar-3").textContent = stats.stack_today;
+    document.getElementById("bar-2").textContent = stats.stack_this_week;
+    document.getElementById("bar-1").textContent = stats.stack_mail_only;
+
+    const queue = await API.get("/api/dashboard/queue");
+    document.getElementById("nav-queue-count").textContent = queue.count;
+    const top = queue.queue.slice(0, 5);
+    const el = document.getElementById("queue-preview");
+    if (top.length === 0) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">✓</div>No callable leads in queue. All caught up.</div>';
+    } else {
+      el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Stack</th><th>Address</th><th>Owner</th><th>Tier</th><th>Calls</th></tr></thead><tbody>` +
+        top.map((l, i) => `<tr onclick="location.href='/leads/${l.id}'">
+          <td class="col-mono">${i + 1}</td>
+          <td>${stackBadge(l.stack_depth)}</td>
+          <td>${l.address}<br><span class="text-xs text-muted">${l.city}, ${l.state}</span></td>
+          <td>${l.owner}</td>
+          <td>${tierLabel(l.stack_depth)}</td>
+          <td class="col-mono">${l.call_count}</td>
+        </tr>`).join("") + `</tbody></table>`;
+    }
+  } catch (e) { toast("Error loading dashboard: " + e.message, "error"); }
+})();
+</script>
+{% endblock %}

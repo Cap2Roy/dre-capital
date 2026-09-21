@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Cash Buyers{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Cash Buyer Network</div>
+    <div class="page-subtitle">Send to your top five buyers first, matched by buy box. Then the wider list.</div>
+  </div>
+  <button class="btn btn-primary" onclick="addBuyerModal()">+ Add Buyer</button>
+</div>
+
+<div class="card">
+  <div class="card-header">Buyer Network (ranked)</div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Name</th><th>Company</th><th>Phone</th><th>Markets</th><th>Price Band</th><th>Beds</th><th>Rehab</th><th>Action</th></tr></thead>
+      <tbody id="buyers-body"><tr><td colspan="9"><div class="empty-state">Loading…</div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadBuyers() {
+  try {
+    const buyers = await API.get("/api/buyers");
+    const body = document.getElementById("buyers-body");
+    if (buyers.length === 0) {
+      body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">♛</div>No buyers yet.</div></td></tr>';
+    } else {
+      body.innerHTML = buyers.map((b, i) => `<tr>
+        <td class="col-mono">${b.ranking}</td>
+        <td class="font-semi">${b.name}</td>
+        <td>${b.company || "—"}</td>
+        <td class="col-mono">${fmtPhone(b.phone)}</td>
+        <td>${b.target_cities || "—"}, ${b.target_states || ""}</td>
+        <td class="col-num">${fmtMoneyK(b.min_price)} – ${fmtMoneyK(b.max_price)}</td>
+        <td class="col-mono">${b.min_beds || "—"}-${b.max_beds || "—"}</td>
+        <td><span class="badge badge-info">${b.rehab_level || "—"}</span></td>
+        <td><button class="btn btn-outline btn-sm" onclick="location.href='/contracts'">Contracts</button></td>
+      </tr>`).join("");
+    }
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function addBuyerModal() {
+  const html = `
+    <div class="form-group"><label class="form-label">Name *</label><input class="form-input" id="b-name"></div>
+    <div class="form-group"><label class="form-label">Company</label><input class="form-input" id="b-company"></div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="b-phone"></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="b-email"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Target States</label><input class="form-input" id="b-states" value="TX"></div>
+      <div class="form-group"><label class="form-label">Target Cities</label><input class="form-input" id="b-cities" placeholder="Houston,Dallas"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Min Price</label><input class="form-input" id="b-minp" type="number"></div>
+      <div class="form-group"><label class="form-label">Max Price</label><input class="form-input" id="b-maxp" type="number"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Min Beds</label><input class="form-input" id="b-minb" type="number"></div>
+      <div class="form-group"><label class="form-label">Max Beds</label><input class="form-input" id="b-maxb" type="number"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Rehab Level</label><select class="form-select" id="b-rehab">
+      <option value="light">Light</option><option value="cosmetic_plus">Cosmetic+</option><option value="gut">Gut</option></select></div>
+    <div class="form-group"><label class="form-label">Ranking (1 = top buyer)</label><input class="form-input" id="b-rank" type="number" value="10"></div>`;
+  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitBuyer()">Add Buyer</button>`;
+  openModal("Add Cash Buyer", html, footer);
+}
+
+async function submitBuyer() {
+  const body = {
+    name: document.getElementById("b-name").value,
+    company: document.getElementById("b-company").value || null,
+    phone: document.getElementById("b-phone").value || null,
+    email: document.getElementById("b-email").value || null,
+    target_states: document.getElementById("b-states").value || null,
+    target_cities: document.getElementById("b-cities").value || null,
+    min_price: parseFloat(document.getElementById("b-minp").value) || null,
+    max_price: parseFloat(document.getElementById("b-maxp").value) || null,
+    min_beds: parseInt(document.getElementById("b-minb").value) || null,
+    max_beds: parseInt(document.getElementById("b-maxb").value) || null,
+    rehab_level: document.getElementById("b-rehab").value || null,
+    ranking: parseInt(document.getElementById("b-rank").value) || 10,
+  };
+  if (!body.name) { toast("Name required", "error"); return; }
+  try {
+    await API.post("/api/buyers", body);
+    document.querySelector(".modal-overlay").remove();
+    toast("Buyer added", "success");
+    loadBuyers();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+loadBuyers();
+</script>
+{% endblock %}

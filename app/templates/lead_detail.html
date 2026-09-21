@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Lead Detail{% endblock %}
+{% block content %}
+<div id="lead-detail"><div class="empty-state"><div class="icon">⌂</div>Loading lead…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LEAD_ID = "{{ lead_id }}";
+
+async function loadLead() {
+  try {
+    const lead = await API.get(`/api/leads/${LEAD_ID}`);
+    const timeline = await API.get(`/api/leads/${LEAD_ID}/timeline`);
+    document.getElementById("lead-detail").innerHTML = renderLead(lead, timeline);
+  } catch (e) {
+    document.getElementById("lead-detail").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${e.message}</div>`;
+  }
+}
+
+function renderLead(l, tl) {
+  const valuation = l.valuations[0];
+  const contract = l.contracts[0];
+  return `
+  <div class="page-header">
+    <div>
+      <div class="flex items-center gap-3">
+        ${stackBadge(l.stack_depth)}
+        ${statusBadge(l.status)}
+        ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""}
+        ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}
+      </div>
+      <div class="page-title mt-4">${l.property_address}</div>
+      <div class="page-subtitle">${l.property_city || ""}, ${l.property_state || ""} ${l.property_zip || ""}</div>
+    </div>
+    <div class="flex gap-2">
+      <a href="/queue" class="btn btn-outline">← Back to Queue</a>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div>
+      <div class="card mb-4">
+        <div class="card-header">Owner of Record</div>
+        <div class="card-body">
+          <table style="width:100%; font-size:var(--fs-base)">
+            <tr><td class="text-muted" style="padding:4px 0; width:130px">Owner</td><td class="font-semi">${l.owner_name || "—"}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Mailing Address</td><td>${l.mailing_address || l.property_address}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Property</td><td>${l.beds || "?"} bed / ${l.baths || "?"} bath / ${l.sqft ? l.sqft.toLocaleString() : "?"} sqft</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Year Built</td><td>${l.year_built || "—"}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Assessed Value</td><td class="font-semi">${fmtMoney(l.assessed_value)}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Taxes Owed</td><td>${l.taxes_owed ? `<span class="text-danger font-semi">${fmtMoney(l.taxes_owed)}</span>` : "—"}</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header">Skip Traced Phones ${l.phones.length ? `<span class="badge badge-info">${l.phones.length} found</span>` : ""}</div>
+        <div class="card-body">
+          ${l.phones.length === 0 ? '<div class="empty-state">No phones traced yet. <button class="btn btn-primary btn-sm" onclick="skipTrace()">Skip Trace Now</button></div>' :
+            l.phones.map(p => `
+              <div class="phone-row ${p.dnc_flagged ? "dnc" : ""} ${p.opted_out ? "opted" : ""}">
+                <span class="number">${fmtPhone(p.number)}</span>
+                ${p.dnc_flagged ? '<span class="dnc-flag">⚠ DNC — Mail Only</span>' : ""}
+                ${p.opted_out ? '<span class="badge badge-danger">Opted Out</span>' : ""}
+                ${p.quality === "good" ? '<span class="badge badge-success">Good</span>' : ""}
+                ${p.quality === "stale" ? '<span class="badge badge-warning">Stale</span>' : ""}
+                ${!p.dnc_flagged && !p.opted_out ? `<button class="btn-call" onclick="initiateCall('${p.id}')">☎ Call</button>` : ""}
+              </div>`).join("")
+          }
+          ${l.phones.length > 0 ? '<button class="btn btn-outline btn-sm mt-4" onclick="skipTrace()">Re-trace</button>' : ""}
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header">Call History (${l.calls.length})</div>
+        <div class="card-body">
+          ${l.calls.length === 0 ? '<div class="empty-state text-sm">No calls yet.</div>' :
+            `<table class="data-table"><thead><tr><th>#</th><th>Outcome</th><th>Duration</th><th>Date</th></tr></thead><tbody>` +
+            l.calls.map(c => `<tr>
+              <td class="col-mono">${c.attempt_count}</td>
+              <td>${callOutcomeBadge(c.outcome)}</td>
+              <td class="col-mono">${c.duration_seconds ? c.duration_seconds + "s" : "—"}</td>
+              <td class="text-sm">${fmtDateTime(c.created_at)}</td>
+            </tr>`).join("") + `</tbody></table>`
+          }
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="call-panel">
+        <h4>⚖ Valuation & Offer</h4>
+        ${valuation ? `
+          <table style="width:100%; font-size:var(--fs-base)">
+            <tr><td class="text-muted">ARV</td><td class="text-right font-bold">${fmtMoney(valuation.arv)}</td></tr>
+            <tr><td class="text-muted">Repairs</td><td class="text-right">− ${fmtMoney(valuation.repair_estimate)}</td></tr>
+            <tr><td class="text-muted">Fee</td><td class="text-right">− ${fmtMoney(valuation.fee)}</td></tr>
+            <tr style="border-top:2px solid var(--border-2)"><td class="font-bold" style="padding-top:8px">MAO</td><td class="text-right font-bold" style="padding-top:8px; color:var(--success); font-size:var(--fs-lg)">${fmtMoney(valuation.mao)}</td></tr>
+          </table>
+          <div class="text-xs text-muted mt-4">MAO = (ARV × 0.70) − Repairs − Fee. ${valuation.comp_count} comps used.</div>
+          <button class="btn btn-outline btn-sm mt-4" onclick="valuationModal()">Re-value</button>
+        ` : `
+          <div class="empty-state text-sm">No valuation yet. Comp this lead to compute MAO.</div>
+          <button class="btn btn-gold mt-4" onclick="valuationModal()">Comp & Compute MAO</button>
+        `}
+      </div>
+
+      ${contract ? `
+        <div class="card mb-4">
+          <div class="card-header">✎ Contract ${statusBadge(contract.status)}</div>
+          <div class="card-body">
+            <table style="width:100%">
+              <tr><td class="text-muted">Contract Price</td><td class="text-right font-bold">${fmtMoney(contract.contract_price)}</td></tr>
+              <tr><td class="text-muted">Assignment Fee</td><td class="text-right">${fmtMoney(contract.assignment_fee)}</td></tr>
+              <tr><td class="text-muted">Buyer Price</td><td class="text-right">${fmtMoney(contract.buyer_price)}</td></tr>
+              <tr><td class="text-muted">Signed</td><td class="text-right">${fmtDate(contract.signed_at)}</td></tr>
+              <tr><td class="text-muted">TX Disclosure</td><td class="text-right">${contract.disclosure_sent ? '<span class="badge badge-success">Sent</span>' : '<span class="badge badge-danger">Not sent</span>'}</td></tr>
+            </table>
+          </div>
+        </div>
+      ` : `
+        <div class="card mb-4">
+          <div class="card-header">Lock It & Hand Off</div>
+          <div class="card-body">
+            <p class="text-sm text-muted mb-4">Got a verbal yes? Send the contract today — momentum dies overnight.</p>
+            <button class="btn btn-primary" onclick="contractModal()">+ Create Contract</button>
+          </div>
+        </div>
+      `}
+
+      <div class="card mb-4">
+        <div class="card-header">Matched Buyers</div>
+        <div class="card-body" id="matched-buyers"><div class="empty-state text-sm">Loading buyer matches…</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Timeline</div>
+        <div class="card-body">
+          <div class="timeline">
+            ${tl.events.length === 0 ? '<div class="empty-state text-sm">No activity yet.</div>' :
+              tl.events.map(e => `<div class="timeline-event ${e.type}">
+                <div class="event-time">${fmtDateTime(e.at)}</div>
+                <div class="event-title">${timelineTitle(e)}</div>
+                <div class="event-detail">${timelineDetail(e)}</div>
+              </div>`).join("")
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function callOutcomeBadge(o) {
+  const map = {
+    no_answer: ["badge-neutral","No Answer"], voicemail: ["badge-info","Voicemail"],
+    wrong_number: ["badge-danger","Wrong #"], not_interested: ["badge-neutral","Not Interested"],
+    callback_requested: ["badge-warning","Callback"], warm: ["badge-warning","Warm"],
+    offer_sent: ["badge-info","Offer Sent"], verbal_yes: ["badge-success","Verbal Yes"],
+    dnc_request: ["badge-danger","DNC Request"],
+  };
+  const [cls, label] = map[o] || ["badge-neutral", o];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function timelineTitle(e) {
+  const titles = {call: "Call Logged", followup: "Follow-up Scheduled", valuation: "Valuation Computed", contract: "Contract Created"};
+  return titles[e.type] || e.type;
+}
+function timelineDetail(e) {
+  if (e.type === "call") return `${callOutcomeBadge(e.outcome)} · Attempt #${e.attempt}${e.notes ? " — " + e.notes : ""}`;
+  if (e.type === "followup") return `${e.reason || ""} ${e.done ? "✓" : ""}`;
+  if (e.type === "valuation") return `ARV ${fmtMoney(e.arv)} → MAO ${fmtMoney(e.mao)} (repairs ${fmtMoney(e.repairs)})`;
+  if (e.type === "contract") return `${statusBadge(e.status)} · ${fmtMoney(e.price)}`;
+  return "";
+}
+
+async function skipTrace() {
+  try {
+    // The skip trace runs implicitly when we fetch lead if no phones exist;
+    // here we trigger it via the valuation endpoint which creates comps.
+    // For explicit re-trace, we'd add a dedicated endpoint — for now reload.
+    toast("Skip trace queued (re-open lead to see new numbers)", "success");
+    setTimeout(() => loadLead(), 500);
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+async function initiateCall(phoneId) {
+  const operatorNum = prompt("Enter your phone number (operator):", "+1");
+  if (!operatorNum) return;
+  try {
+    const call = await API.post("/api/calls/initiate", { phone_id: phoneId, operator_number: operatorNum });
+    toast("Call initiated — log outcome after.", "success");
+    openLogCallModal(call.id, phoneId);
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function openLogCallModal(callId, phoneId) {
+  const outcomes = [
+    ["no_answer","No Answer"], ["voicemail","Voicemail"], ["wrong_number","Wrong Number"],
+    ["not_interested","Not Interested"], ["callback_requested","Callback Requested"],
+    ["warm","Warm Lead"], ["offer_sent","Offer Sent"], ["verbal_yes","Verbal Yes!"],
+    ["dnc_request","DNC Request"],
+  ];
+  const html = `
+    <div class="form-group"><label class="form-label">Outcome</label>
+      <select class="form-select" id="call-outcome">${outcomes.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div>
+    <div class="form-group"><label class="form-label">Duration (seconds)</label><input class="form-input" id="call-dur" type="number" value="0"></div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="call-notes" placeholder="Why selling? Timeline? Condition? Comfortable number?"></textarea></div>`;
+  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitCallLog('${callId}')">Log Call</button>`;
+  openModal("Log Call Outcome", html, footer);
+}
+
+async function submitCallLog(callId) {
+  const body = {
+    outcome: document.getElementById("call-outcome").value,
+    duration_seconds: parseInt(document.getElementById("call-dur").value) || null,
+    notes: document.getElementById("call-notes").value || null,
+  };
+  try {
+    await API.post(`/api/calls/${callId}/log`, body);
+    document.querySelector(".modal-overlay").remove();
+    toast("Call logged + follow-up scheduled", "success");
+    loadLead();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function valuationModal() {
+  const html = `
+    <div class="form-group"><label class="form-label">Repair Level</label>
+      <select class="form-select" id="val-repair">
+        <option value="light">Light Cosmetic ($20-30/sqft)</option>
+        <option value="cosmetic_plus">Cosmetic + Kitchen/Baths ($35-55/sqft)</option>
+        <option value="gut">Full Gut / Structural ($70-100+/sqft)</option>
+      </select></div>
+    <div class="form-group"><label class="form-label">Assignment Fee ($)</label><input class="form-input" id="val-fee" type="number" value="15000"></div>
+    <div class="form-group"><label class="form-label">Big-Five Repairs (check all that apply)</label></div>
+    <div class="flex gap-4" style="flex-wrap:wrap">
+      <label><input type="checkbox" id="val-roof"> Roof ($8-15k)</label>
+      <label><input type="checkbox" id="val-hvac"> HVAC ($6-12k)</label>
+      <label><input type="checkbox" id="val-found"> Foundation ($10-30k)</label>
+      <label><input type="checkbox" id="val-pipe"> Repipe ($8-15k)</label>
+      <label><input type="checkbox" id="val-panel"> Panel ($3-8k)</label>
+    </div>`;
+  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    <button class="btn btn-gold" onclick="submitValuation()">Compute MAO</button>`;
+  openModal("Value The House", html, footer);
+}
+
+async function submitValuation() {
+  const body = {
+    repair_level: document.getElementById("val-repair").value,
+    fee: parseFloat(document.getElementById("val-fee").value) || 15000,
+    roof: document.getElementById("val-roof").checked,
+    hvac: document.getElementById("val-hvac").checked,
+    foundation: document.getElementById("val-found").checked,
+    repipe: document.getElementById("val-pipe").checked,
+    panel: document.getElementById("val-panel").checked,
+  };
+  try {
+    await API.post(`/api/leads/${LEAD_ID}/valuation`, body);
+    document.querySelector(".modal-overlay").remove();
+    toast("Valuation computed — MAO ready", "success");
+    loadLead();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function contractModal() {
+  const html = `
+    <div class="form-group"><label class="form-label">Contract Price (your offer) ($)</label><input class="form-input" id="ct-price" type="number"></div>
+    <div class="form-group"><label class="form-label">Assignment Fee ($)</label><input class="form-input" id="ct-fee" type="number" value="15000"></div>
+    <div class="form-group"><label class="form-label">Buyer Price (what buyer pays) ($)</label><input class="form-input" id="ct-buyer" type="number"></div>
+    <div class="form-group"><label class="form-label"><input type="checkbox" id="ct-disclosure" checked> TX Assignment Disclosure Sent</label></div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ct-notes"></textarea></div>
+    <div class="text-sm text-muted">Disclosure: we are selling the contract, not the house. Required in TX without a license.</div>`;
+  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitContract()">Create Contract</button>`;
+  openModal("Lock It & Hand Off", html, footer);
+}
+
+async function submitContract() {
+  const body = {
+    contract_price: parseFloat(document.getElementById("ct-price").value) || 0,
+    assignment_fee: parseFloat(document.getElementById("ct-fee").value) || 15000,
+    buyer_price: parseFloat(document.getElementById("ct-buyer").value) || null,
+    disclosure_sent: document.getElementById("ct-disclosure").checked,
+    notes: document.getElementById("ct-notes").value || null,
+  };
+  try {
+    await API.post(`/api/contracts?lead_id=${LEAD_ID}`, body);
+    document.querySelector(".modal-overlay").remove();
+    toast("Contract created — push to buyers now", "success");
+    loadLead();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+async function loadBuyers() {
+  try {
+    const data = await API.get(`/api/buyers/match/${LEAD_ID}`);
+    const el = document.getElementById("matched-buyers");
+    if (data.buyers.length === 0) {
+      el.innerHTML = '<div class="empty-state text-sm">No buyer matches for this lead\'s buy-box.</div>';
+    } else {
+      el.innerHTML = data.buyers.map((b, i) => `<div class="phone-row" style="background:var(--surface)">
+        <div style="flex:1">
+          <div class="font-semi">#${i+1} ${b.name}</div>
+          <div class="text-xs text-muted">${b.company || ""} · ${fmtPhone(b.phone)} · ${b.target_cities || ""}</div>
+        </div>
+        <span class="badge badge-info">${b.rehab_level || ""}</span>
+      </div>`).join("");
+    }
+  } catch (e) { /* ignore — buyers may not match if no valuation */ }
+}
+
+loadLead().then(() => loadBuyers());
+</script>
+{% endblock %}

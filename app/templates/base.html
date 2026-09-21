@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}DRE-Capital{% endblock %} — Property Pipeline</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js"></script>
+</head>
+<body data-page="{{ page }}">
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1><span class="logo-mark">DRE</span> DRE-Capital</h1>
+      <div class="tagline">Direct Real Estate Capital</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Acquisitions</div>
+      <a href="/" data-page="dashboard"><span class="nav-icon">▤</span> <span>Dashboard</span></a>
+      <a href="/queue" data-page="queue"><span class="nav-icon">☎</span> <span>Call Queue</span><span class="nav-badge" id="nav-queue-count">—</span></a>
+      <a href="/leads" data-page="leads"><span class="nav-icon">⌂</span> <span>Leads</span></a>
+      <a href="/comps" data-page="comps"><span class="nav-icon">$</span> <span>Comps &amp; Offers</span></a>
+      <a href="/contracts" data-page="contracts"><span class="nav-icon">✎</span> <span>Contracts</span></a>
+      <div class="nav-section">Network</div>
+      <a href="/buyers" data-page="buyers"><span class="nav-icon">♛</span> <span>Cash Buyers</span></a>
+      <div class="nav-section">Data</div>
+      <a href="/import" data-page="import"><span class="nav-icon">⇪</span> <span>Import Lists</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar">AO</div>
+        <div>Acquisitions Operator<br><span style="color:var(--navy-400)">ops@dre-capital.com</span></div>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

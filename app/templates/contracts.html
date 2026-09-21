@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Contracts{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Contracts</div>
+    <div class="page-subtitle">Signed assignment contracts — push to buyers the day you sign.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">All Contracts</div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Property</th><th>Contract Price</th><th>Assignment Fee</th><th>Buyer Price</th><th>Buyer</th><th>Status</th><th>Signed</th><th>Disclosure</th><th>Action</th></tr></thead>
+      <tbody id="contracts-body"><tr><td colspan="9"><div class="empty-state">Loading…</div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt-5">
+  <div class="card-header">The Rules</div>
+  <div class="card-body">
+    <ul style="line-height:2; color:var(--text-1)">
+      <li><strong>Disclose</strong> you are selling the contract, not the house. Put it in writing. In Texas this keeps you legal without a license.</li>
+      <li><strong>Close</strong> through an investor-friendly title company that handles assignments and double closings.</li>
+      <li><strong>Send to top five buyers first</strong>, matched by buy box. Then the wider list, then a marketplace.</li>
+      <li><strong>Momentum dies overnight</strong> — the day you sign, it goes to your top buyers.</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const statusColors = {pending:"badge-warning", signed:"badge-info", assigned:"badge-success", closed:"badge-success", fallen:"badge-danger"};
+
+async function loadContracts() {
+  try {
+    const contracts = await API.get("/api/contracts");
+    const body = document.getElementById("contracts-body");
+    if (contracts.length === 0) {
+      body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">✎</div>No contracts yet. Get a verbal yes, then create one from the lead detail page.</div></td></tr>';
+    } else {
+      // Enrich with lead data
+      const enriched = await Promise.all(contracts.map(async c => {
+        // We need lead address; fetch via a lightweight approach
+        return c;
+      }));
+      body.innerHTML = contracts.map(c => `<tr>
+        <td class="font-semi">Lead ${c.lead_id ? `<a href="/leads/${c.lead_id}">→ view</a>` : "—"}</td>
+        <td class="col-num font-semi">${fmtMoney(c.contract_price)}</td>
+        <td class="col-num">${fmtMoney(c.assignment_fee)}</td>
+        <td class="col-num">${c.buyer_price ? fmtMoney(c.buyer_price) : "—"}</td>
+        <td>${c.buyer_id ? "Assigned" : "Unassigned"}</td>
+        <td><span class="badge ${statusColors[c.status] || "badge-neutral"}">${c.status}</span></td>
+        <td class="text-sm">${fmtDate(c.signed_at)}</td>
+        <td>${c.disclosure_sent ? '<span class="badge badge-success">Sent</span>' : '<span class="badge badge-danger">Not sent</span>'}</td>
+        <td>
+          <select class="form-select btn-sm" style="width:auto; padding:2px 8px" onchange="updateStatus('${c.id}', this.value)">
+            <option value="">Update…</option>
+            <option value="signed">Mark Signed</option>
+            <option value="assigned">Mark Assigned</option>
+            <option value="closed">Mark Closed</option>
+            <option value="fallen">Mark Fallen</option>
+          </select>
+        </td>
+      </tr>`).join("");
+    }
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+async function updateStatus(id, status) {
+  if (!status) return;
+  try {
+    await API.patch(`/api/contracts/${id}/status?status=${status}`);
+    toast("Contract updated", "success");
+    loadContracts();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+loadContracts();
+</script>
+{% endblock %}

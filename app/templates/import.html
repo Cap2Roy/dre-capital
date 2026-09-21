@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Import Lists{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Import Lists</div>
+    <div class="page-subtitle">Pull county records, import, and re-stack. Do this before 9am or after 5pm.</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">⇪ Upload County CSV</div>
+    <div class="card-body">
+      <div class="form-group"><label class="form-label">List Name *</label>
+        <input class="form-input" id="imp-name" placeholder="e.g. Harris Co Pre-Foreclosure Sep 2026"></div>
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">List Type *</label>
+          <select class="form-select" id="imp-type">
+            <option value="pre_foreclosure">Pre-Foreclosure</option>
+            <option value="tax_delinquent">Tax Delinquent</option>
+            <option value="probate">Probate / Inherited</option>
+            <option value="divorce">Divorce</option>
+            <option value="absentee_owner">Absentee Owner</option>
+            <option value="tired_landlord">Tired Landlord</option>
+            <option value="vacant_code_violation">Vacant / Code Violation</option>
+          </select></div>
+        <div class="form-group"><label class="form-label">State</label>
+          <input class="form-input" id="imp-state" value="TX"></div>
+      </div>
+      <div class="form-group"><label class="form-label">County</label>
+        <input class="form-input" id="imp-county" placeholder="e.g. Harris"></div>
+      <div class="form-group"><label class="form-label">CSV File *</label>
+        <input type="file" id="imp-file" accept=".csv" class="form-input" style="padding:8px"></div>
+      <div class="text-sm text-muted mb-4">
+        Required column: <code>property_address</code> (or address / site_address / property).<br>
+        Optional: owner_name, city, state, zip, mailing_address, beds, baths, sqft, assessed_value, taxes_owed.
+      </div>
+      <button class="btn btn-primary" onclick="uploadCSV()">Upload & Import</button>
+      <div id="imp-result" class="mt-4"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Existing Source Lists</div>
+    <div class="card-body">
+      <div id="lists-list"><div class="empty-state">Loading…</div></div>
+      <button class="btn btn-outline btn-sm mt-5" onclick="recomputeStacks()">↻ Recompute All Stack Depths</button>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-5">
+  <div class="card-header">Where To Pull (Priority Order)</div>
+  <div class="card-body">
+    <table class="data-table">
+      <thead><tr><th>Source</th><th>What You Get</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td>County appraisal district</td><td>Owner names, mailing addresses, values. Mailing ≠ property → absentee owners.</td><td>Free</td></tr>
+        <tr><td>County clerk</td><td>Probate, divorce, lis pendens, deeds, liens. New filings post weekly.</td><td>Free</td></tr>
+        <tr><td>Tax assessor-collector</td><td>The delinquent tax roll.</td><td>Free</td></tr>
+        <tr><td>City code enforcement</td><td>Violation and condemnation lists.</td><td>Free / records request</td></tr>
+        <tr><td>Trustee foreclosure postings</td><td>Homes headed to auction, posted 21 days before sale.</td><td>Free</td></tr>
+        <tr><td>PropStream / BatchLeads</td><td>All of the above pre-filtered, plus skip tracing and mail.</td><td>~$80-200/mo</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadLists() {
+  try {
+    const lists = await API.get("/api/import/lists");
+    const el = document.getElementById("lists-list");
+    if (lists.length === 0) {
+      el.innerHTML = '<div class="empty-state text-sm">No lists imported yet.</div>';
+    } else {
+      el.innerHTML = `<table class="data-table"><thead><tr><th>List Name</th><th>Type</th><th>County</th><th>Records</th><th>Imported</th></tr></thead><tbody>` +
+        lists.map(l => `<tr>
+          <td class="font-semi">${l.name}</td>
+          <td><span class="badge badge-info">${l.list_type.replace(/_/g," ")}</span></td>
+          <td>${l.county || "—"}</td>
+          <td class="col-mono">${l.record_count}</td>
+          <td class="text-sm">${fmtDate(l.imported_at)}</td>
+        </tr>`).join("") + `</tbody></table>`;
+    }
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+async function uploadCSV() {
+  const file = document.getElementById("imp-file").files[0];
+  if (!file) { toast("Select a CSV file", "error"); return; }
+  const name = document.getElementById("imp-name").value;
+  if (!name) { toast("List name required", "error"); return; }
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("list_name", name);
+  fd.append("list_type", document.getElementById("imp-type").value);
+  fd.append("county", document.getElementById("imp-county").value);
+  fd.append("state", document.getElementById("imp-state").value);
+  document.getElementById("imp-result").innerHTML = '<div class="text-sm text-muted">Importing…</div>';
+  try {
+    const r = await API.upload("/api/import/csv", fd);
+    document.getElementById("imp-result").innerHTML = `<div class="badge badge-success">✓ ${r.record_count} records imported into "${r.name}"</div>`;
+    toast(`${r.record_count} records imported`, "success");
+    loadLists();
+  } catch (e) {
+    document.getElementById("imp-result").innerHTML = `<div class="badge badge-danger">Error: ${e.message}</div>`;
+    toast("Import failed: " + e.message, "error");
+  }
+}
+
+async function recomputeStacks() {
+  try {
+    const r = await API.post("/api/import/recompute-stacks");
+    toast(`${r.updated} leads re-stacked`, "success");
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+loadLists();
+</script>
+{% endblock %}

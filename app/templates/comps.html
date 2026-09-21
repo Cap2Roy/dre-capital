@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Comps & Offers{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Comps & Offers</div>
+    <div class="page-subtitle">Warm leads that need a comp + offer today. Speed is most of your edge.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Warm & Working Leads — Comped & Pending</div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Address</th><th>Owner</th><th>Stack</th><th>Status</th><th>ARV</th><th>Repairs</th><th>MAO</th><th>Assessed</th><th>Action</th></tr></thead>
+      <tbody id="comps-body"><tr><td colspan="9"><div class="empty-state">Loading…</div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt-5">
+  <div class="card-header">The MAO Formula</div>
+  <div class="card-body">
+    <div style="font-family:var(--font-mono); font-size:var(--fs-lg); background:var(--surface-2); padding:var(--sp-4); border-radius:var(--r-md); text-align:center">
+      MAO = (ARV × 0.70) − Repairs − Fee
+    </div>
+    <div class="grid-3 mt-5">
+      <div><strong>ARV</strong><div class="text-sm text-muted">After-repair value. Median $/sqft of renovated solds within 0.5–1 mi, last 3–6 months.</div></div>
+      <div><strong>Repairs</strong><div class="text-sm text-muted">Light $20-30/sqft · Cosmetic+ $35-55 · Gut $70-100+. Plus big-five: roof, HVAC, foundation, repipe, panel.</div></div>
+      <div><strong>Fee</strong><div class="text-sm text-muted">Your assignment fee. Default $15k. Never shrink to zero — that's how you work for free.</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadComps() {
+  try {
+    const data = await API.get("/api/leads?status=warm&page=1&page_size=50");
+    const data2 = await API.get("/api/leads?status=working&page=1&page_size=50");
+    const leads = [...data.leads, ...data2.leads];
+    const body = document.getElementById("comps-body");
+    if (leads.length === 0) {
+      body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">$</div>No warm/working leads. Mark a lead warm to start comping.</div></td></tr>';
+    } else {
+      body.innerHTML = leads.map(l => {
+        const v = l.valuations[0];
+        return `<tr onclick="location.href='/leads/${l.id}'">
+          <td><div class="font-semi">${l.property_address}</div><div class="text-xs text-muted">${l.property_city}, ${l.property_state}</div></td>
+          <td>${l.owner_name}</td>
+          <td>${stackBadge(l.stack_depth)}</td>
+          <td>${statusBadge(l.status)}</td>
+          <td class="col-num font-semi">${v ? fmtMoney(v.arv) : '<span class="text-danger">— comp it</span>'}</td>
+          <td class="col-num">${v ? fmtMoney(v.repair_estimate) : "—"}</td>
+          <td class="col-num font-bold" style="color:var(--success)">${v ? fmtMoney(v.mao) : "—"}</td>
+          <td class="col-num">${fmtMoneyK(l.assessed_value)}</td>
+          <td><a href="/leads/${l.id}" class="btn btn-outline btn-sm">${v ? "View" : "Comp →"}</a></td>
+        </tr>`;
+      }).join("");
+    }
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+loadComps();
+</script>
+{% endblock %}

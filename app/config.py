@@ -1,0 +1,55 @@
+"""Application configuration loaded from environment."""
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+
+
+class Settings:
+    """Central settings.
+
+    Reads from environment with sensible local-dev defaults so the app runs
+    out of the box with SQLite and mock providers.  Production overrides come
+    from Cloud Run environment variables / Secret Manager.
+    """
+
+    # Database
+    database_url: str
+    # Security
+    secret_key: str
+    # Twilio click-to-call
+    twilio_account_sid: str
+    twilio_auth_token: str
+    twilio_from_number: str
+    app_base_url: str
+    # Skip tracing
+    skiptrace_provider: str
+    skiptrace_api_key: str
+    # Comps
+    comps_provider: str
+    comps_api_key: str
+
+    def __init__(self) -> None:
+        self.database_url = os.getenv("DATABASE_URL", "sqlite:///./dre_capital.db")
+        self.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me-0123456789abcdef")
+        self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+        self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+        self.twilio_from_number = os.getenv("TWILIO_FROM_NUMBER", "")
+        self.app_base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
+        self.skiptrace_provider = os.getenv("SKIPTRACE_PROVIDER", "mock")
+        self.skiptrace_api_key = os.getenv("SKIPTRACE_API_KEY", "")
+        self.comps_provider = os.getenv("COMPS_PROVIDER", "mock")
+        self.comps_api_key = os.getenv("COMPS_API_KEY", "")
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.database_url.startswith("sqlite")
+
+    @property
+    def twilio_configured(self) -> bool:
+        return bool(self.twilio_account_sid and self.twilio_auth_token and self.twilio_from_number)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

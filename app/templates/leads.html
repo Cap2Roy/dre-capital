@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Leads{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Leads</div>
+    <div class="page-subtitle">All properties. Sorted by stack depth — call deepest first.</div>
+  </div>
+  <button class="btn btn-primary" onclick="addLeadModal()">+ Add Lead</button>
+</div>
+
+<div class="toolbar">
+  <div class="search-box"><input type="text" id="search" placeholder="Search address, owner, city, zip…"></div>
+  <select class="form-select" id="filter-status" style="width:auto">
+    <option value="">All Status</option>
+    <option value="new">New</option><option value="working">Working</option>
+    <option value="warm">Warm</option><option value="under_contract">Under Contract</option>
+    <option value="assigned">Assigned</option><option value="closed">Closed</option>
+  </select>
+  <select class="form-select" id="filter-state" style="width:auto">
+    <option value="">All States</option><option value="TX">TX</option>
+  </select>
+  <select class="form-select" id="filter-stack" style="width:auto">
+    <option value="">All Stacks</option>
+    <option value="3">3+ (Today)</option><option value="2">2+ (This week)</option>
+  </select>
+  <select class="form-select" id="sort" style="width:auto">
+    <option value="stack">Sort: Stack Depth</option>
+    <option value="followup">Sort: Follow-up</option>
+    <option value="newest">Sort: Newest</option>
+    <option value="warm">Sort: Warm First</option>
+  </select>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="data-table" id="leads-table">
+      <thead>
+        <tr>
+          <th>Stack</th><th>Address</th><th>Owner</th><th>City</th>
+          <th>Beds</th><th>Sqft</th><th>Assessed</th><th>Status</th>
+          <th>Next Follow-up</th><th>Calls</th>
+        </tr>
+      </thead>
+      <tbody id="leads-body">
+        <tr><td colspan="10"><div class="empty-state">Loading leads…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div id="pager" class="flex items-center justify-between mt-4"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let curPage = 1;
+const pageSize = 25;
+
+async function loadLeads() {
+  const q = document.getElementById("search").value;
+  const status = document.getElementById("filter-status").value;
+  const state = document.getElementById("filter-state").value;
+  const minStack = document.getElementById("filter-stack").value;
+  const sort = document.getElementById("sort").value;
+  const params = new URLSearchParams({ page: curPage, page_size: pageSize, sort });
+  if (q) params.set("q", q);
+  if (status) params.set("status", status);
+  if (state) params.set("state", state);
+  if (minStack) params.set("min_stack", minStack);
+
+  try {
+    const data = await API.get("/api/leads?" + params);
+    const body = document.getElementById("leads-body");
+    if (data.leads.length === 0) {
+      body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">⌂</div>No leads match your filters.</div></td></tr>';
+    } else {
+      body.innerHTML = data.leads.map(l => `<tr onclick="location.href='/leads/${l.id}'">
+        <td>${stackBadge(l.stack_depth)}</td>
+        <td><div class="font-semi">${l.property_address}</div>
+          <div class="text-xs text-muted">${l.property_zip || ""} ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""} ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}</div></td>
+        <td>${l.owner_name}</td>
+        <td>${l.property_city || "—"}, ${l.property_state || ""}</td>
+        <td>${l.beds || "—"}</td>
+        <td class="col-mono">${l.sqft ? l.sqft.toLocaleString() : "—"}</td>
+        <td class="col-num">${fmtMoneyK(l.assessed_value)}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger font-semi" : "text-muted"}">${fmtDate(l.next_followup)}</td>
+        <td class="col-mono">${(l.calls || []).length}</td>
+      </tr>`).join("");
+    }
+    const totalPages = Math.ceil(data.total / pageSize);
+    document.getElementById("pager").innerHTML = `
+      <span class="text-sm text-muted">${data.total} leads</span>
+      <div class="flex gap-2">
+        <button class="btn btn-outline btn-sm" ${curPage <= 1 ? "disabled" : ""} onclick="curPage--; loadLeads()">← Prev</button>
+        <span class="text-sm text-muted" style="padding:4px 8px">Page ${curPage} of ${totalPages || 1}</span>
+        <button class="btn btn-outline btn-sm" ${curPage >= totalPages ? "disabled" : ""} onclick="curPage++; loadLeads()">Next →</button>
+      </div>`;
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function addLeadModal() {
+  const html = `
+    <div class="form-group"><label class="form-label">Property Address *</label><input class="form-input" id="nl-addr" placeholder="123 Main St"></div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="nl-city"></div>
+      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="nl-state" value="TX"></div>
+    </div>
+    <div class="form-group"><label class="form-label">ZIP</label><input class="form-input" id="nl-zip"></div>
+    <div class="form-group"><label class="form-label">Owner Name</label><input class="form-input" id="nl-owner"></div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Beds</label><input class="form-input" id="nl-beds" type="number"></div>
+      <div class="form-group"><label class="form-label">Sqft</label><input class="form-input" id="nl-sqft" type="number"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Assessed Value</label><input class="form-input" id="nl-assessed" type="number"></div>`;
+  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitNewLead()">Save Lead</button>`;
+  openModal("Add Lead", html, footer);
+}
+
+async function submitNewLead() {
+  const body = {
+    property_address: document.getElementById("nl-addr").value,
+    property_city: document.getElementById("nl-city").value || null,
+    property_state: document.getElementById("nl-state").value || null,
+    property_zip: document.getElementById("nl-zip").value || null,
+    owner_name: document.getElementById("nl-owner").value || "",
+    beds: parseInt(document.getElementById("nl-beds").value) || null,
+    sqft: parseInt(document.getElementById("nl-sqft").value) || null,
+    assessed_value: parseFloat(document.getElementById("nl-assessed").value) || null,
+  };
+  if (!body.property_address) { toast("Address required", "error"); return; }
+  try {
+    await API.post("/api/leads", body);
+    document.querySelector(".modal-overlay").remove();
+    toast("Lead added", "success");
+    loadLeads();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+let searchTimer;
+document.getElementById("search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { curPage = 1; loadLeads(); }, 300);
+});
+["filter-status", "filter-state", "filter-stack", "sort"].forEach(id =>
+  document.getElementById(id).addEventListener("change", () => { curPage = 1; loadLeads(); }));
+
+(async () => {
+  const q = await API.get("/api/dashboard/queue");
+  document.getElementById("nav-queue-count").textContent = q.count;
+  loadLeads();
+})();
+</script>
+{% endblock %}

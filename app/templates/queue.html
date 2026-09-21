@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Call Queue{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Call Queue</div>
+    <div class="page-subtitle">Call the top of the stack — deepest first. This is the job.</div>
+  </div>
+</div>
+
+<div class="card mb-4" style="background:var(--navy-50); border-color:var(--navy-200)">
+  <div class="card-body">
+    <div class="grid-3">
+      <div><strong>3+ stacks → Call Today</strong><div class="text-sm text-muted mt-4">Almost nobody else has these. Start here.</div></div>
+      <div><strong>2 stacks → This Week</strong><div class="text-sm text-muted mt-4">Good overlap. Work after the 3+ stack.</div></div>
+      <div><strong>1 stack → Mail Only</strong><div class="text-sm text-muted">Every investor has these. Don't burn phone time.</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Today's Queue <span id="queue-count" class="badge badge-info">—</span></div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Stack</th><th>Tier</th><th>Address</th><th>Owner</th><th>Phone</th><th>Status</th><th>Calls</th><th>Next</th><th>Action</th></tr></thead>
+      <tbody id="queue-body"><tr><td colspan="10"><div class="empty-state">Loading queue…</div></td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadQueue() {
+  try {
+    const data = await API.get("/api/dashboard/queue");
+    document.getElementById("queue-count").textContent = data.count + " leads";
+    const body = document.getElementById("queue-body");
+    if (data.queue.length === 0) {
+      body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">✓</div>No callable leads. Import more lists or skip trace pending leads.</div></td></tr>';
+    } else {
+      body.innerHTML = data.queue.map((l, i) => `<tr>
+        <td class="col-mono">${i + 1}</td>
+        <td>${stackBadge(l.stack_depth)}</td>
+        <td>${tierLabel(l.stack_depth)}</td>
+        <td onclick="location.href='/leads/${l.id}'" style="cursor:pointer">
+          <div class="font-semi">${l.address}</div>
+          <div class="text-xs text-muted">${l.city}, ${l.state}</div></td>
+        <td>${l.owner}</td>
+        <td class="col-mono">•••${l.phone_preview || ""}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td class="col-mono">${l.call_count}</td>
+        <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger" : "text-muted"}">${fmtDate(l.next_followup)}</td>
+        <td><a href="/leads/${l.id}" class="btn btn-primary btn-sm">Open →</a></td>
+      </tr>`).join("");
+    }
+    document.getElementById("nav-queue-count").textContent = data.count;
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+loadQueue();
+</script>
+{% endblock %}
