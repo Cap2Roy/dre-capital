@@ -112,6 +112,7 @@ class User(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(40), default="acquisitions")  # acquisitions | manager | admin
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Relations
     calls: Mapped[list["Call"]] = relationship(back_populates="caller")
 

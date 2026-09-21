@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DRE-Capital — Sign In</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js"></script>
+</head>
+<body class="login-body">
+  <div class="login-container">
+    <div class="login-left">
+      <div class="login-brand">
+        <div class="login-logo">
+          <span class="logo-mark">DRE</span>
+          <span class="logo-text">DRE-Capital</span>
+        </div>
+        <p class="login-tagline">Direct Real Estate Capital</p>
+      </div>
+      <div class="login-hero">
+        <h2>Find deals before anyone else sees them.</h2>
+        <p>Stack motivated-seller lists, value properties with the MAO formula, reach owners by compliant click-to-call, and assign contracts to your cash buyer network.</p>
+      </div>
+      <div class="login-features">
+        <div class="login-feature"><span class="feat-icon">▤</span> <span>Stack-depth ranking — call the overlap first</span></div>
+        <div class="login-feature"><span class="feat-icon">$</span> <span>Comps engine + MAO: (ARV × 0.70) − Repairs − Fee</span></div>
+        <div class="login-feature"><span class="feat-icon">☎</span> <span>Compliant click-to-call — manual-dial, DNC scrubbed</span></div>
+        <div class="login-feature"><span class="feat-icon">♛</span> <span>Buy-box matching to your cash buyer network</span></div>
+      </div>
+    </div>
+    <div class="login-right">
+      <div class="login-card">
+        <h1>Sign In</h1>
+        <p class="login-sub">Enter your credentials to access the pipeline</p>
+        <form id="login-form" class="login-form">
+          <div class="form-group">
+            <label class="form-label" for="email">Email</label>
+            <input type="email" id="email" name="email" class="form-input" placeholder="you@dre-capital.com" required autocomplete="email" autofocus>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="password">Password</label>
+            <input type="password" id="password" name="password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+          </div>
+          <div id="login-error" class="login-error" style="display:none;"></div>
+          <button type="submit" class="btn btn-gold btn-block" id="login-btn">Sign In</button>
+        </form>
+        <div class="login-demo">
+          <p>Demo credentials:</p>
+          <code>admin@dre-capital.com / capital2026</code>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (async () => {
+    const form = document.getElementById("login-form");
+    const btn = document.getElementById("login-btn");
+    const errEl = document.getElementById("login-error");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = "Signing in…";
+      errEl.style.display = "none";
+
+      try {
+        const r = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: document.getElementById("email").value,
+            password: document.getElementById("password").value,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Login failed");
+        window.location.href = "/";
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = "block";
+        btn.disabled = false;
+        btn.textContent = "Sign In";
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -11,7 +11,7 @@
 <div class="app-layout">
   <aside class="sidebar">
     <div class="sidebar-brand">
-      <h1><span class="logo-mark">DRE</span> DRE-Capital</h1>
+      <h1><span class="logo-mark">DRE</span> <span class="logo-text">DRE-Capital</span></h1>
       <div class="tagline">Direct Real Estate Capital</div>
     </div>
     <nav class="sidebar-nav">
@@ -25,12 +25,20 @@
       <a href="/buyers" data-page="buyers"><span class="nav-icon">♛</span> <span>Cash Buyers</span></a>
       <div class="nav-section">Data</div>
       <a href="/import" data-page="import"><span class="nav-icon">⇪</span> <span>Import Lists</span></a>
+      {% if is_admin %}
+      <div class="nav-section">Admin</div>
+      <a href="/settings" data-page="settings"><span class="nav-icon">⚙</span> <span>Settings &amp; Users</span></a>
+      {% endif %}
     </nav>
     <div class="sidebar-footer">
       <div class="user-chip">
-        <div class="avatar">AO</div>
-        <div>Acquisitions Operator<br><span style="color:var(--navy-400)">ops@dre-capital.com</span></div>
+        <div class="avatar">{{ user_initials }}</div>
+        <div>
+          <div class="user-name">{{ user_name }}</div>
+          <div class="user-email">{{ user_email }}</div>
+        </div>
       </div>
+      <button class="btn-logout" onclick="doLogout()" title="Sign out">⏻ Sign Out</button>
     </div>
   </aside>
   <main class="main">

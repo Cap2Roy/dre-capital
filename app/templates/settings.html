@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Settings &amp; Users</div>
+    <div class="page-subtitle">Manage your account and team members.</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <!-- Profile -->
+  <div class="card">
+    <div class="card-header">Your Profile</div>
+    <div class="card-body">
+      <div class="profile-info">
+        <div class="avatar avatar-lg">{{ user_initials }}</div>
+        <div>
+          <div class="profile-name">{{ user_name }}</div>
+          <div class="profile-email">{{ user_email }}</div>
+          <span class="badge badge-{% if is_admin %}gold{% else %}info{% endif %}">{{ user_role|capitalize }}</span>
+        </div>
+      </div>
+      <hr class="divider">
+      <form id="profile-form" class="form">
+        <div class="form-group">
+          <label class="form-label" for="profile-name">Display Name</label>
+          <input type="text" id="profile-name" class="form-input" value="{{ user_name }}">
+        </div>
+        <button type="submit" class="btn btn-primary">Save Name</button>
+      </form>
+      <hr class="divider">
+      <form id="password-form" class="form">
+        <div class="form-group">
+          <label class="form-label" for="current-pw">Current Password</label>
+          <input type="password" id="current-pw" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="new-pw">New Password</label>
+          <input type="password" id="new-pw" class="form-input" required minlength="8">
+        </div>
+        <button type="submit" class="btn btn-outline">Change Password</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Team management (admin only) -->
+  <div class="card">
+    <div class="card-header">
+      Team Members
+      <button class="btn btn-gold btn-sm" onclick="showAddUserModal()">+ Add User</button>
+    </div>
+    <div class="card-body" id="users-list">
+      <div class="empty-state"><div class="icon">⊕</div>Loading users…</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Profile ──────────────────────────────────────────────────
+document.getElementById("profile-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const me = await API.get("/api/auth/me");
+    await API.patch(`/api/users/${me.id}`, { name: document.getElementById("profile-name").value });
+    toast("Name updated", "success");
+    setTimeout(() => location.reload(), 800);
+  } catch (err) { toast("Error: " + err.message, "error"); }
+});
+
+document.getElementById("password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await API.post("/api/auth/change-password", {
+      current_password: document.getElementById("current-pw").value,
+      new_password: document.getElementById("new-pw").value,
+    });
+    toast("Password changed", "success");
+    document.getElementById("password-form").reset();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+});
+
+// ── User management (admin) ──────────────────────────────────
+async function loadUsers() {
+  try {
+    const users = await API.get("/api/users");
+    const el = document.getElementById("users-list");
+    el.innerHTML = `<table class="data-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${users.map(u => `
+        <tr>
+          <td><strong>${esc(u.name)}</strong></td>
+          <td class="text-sm">${esc(u.email)}</td>
+          <td><span class="badge badge-${u.role === 'admin' ? 'gold' : 'info'}">${u.role}</span></td>
+          <td>${u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-danger">Disabled</span>'}</td>
+          <td>
+            <button class="btn btn-outline btn-sm" onclick="editUser('${u.id}','${esc(u.name)}','${u.email}','${u.role}',${u.active})">Edit</button>
+            ${u.active ? `<button class="btn btn-danger btn-sm" onclick="deactivateUser('${u.id}','${esc(u.name)}')">Disable</button>` : ''}
+          </td>
+        </tr>`).join("")}
+      </tbody></table>`;
+  } catch (err) {
+    document.getElementById("users-list").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${err.message}</div>`;
+  }
+}
+
+function showAddUserModal() {
+  openModal("Add Team Member", `
+    <form id="add-user-form">
+      <div class="form-group">
+        <label class="form-label">Name</label>
+        <input type="text" id="new-user-name" class="form-input" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input type="email" id="new-user-email" class="form-input" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input type="password" id="new-user-password" class="form-input" required minlength="8" placeholder="Min 8 characters">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <select id="new-user-role" class="form-select">
+          <option value="acquisitions">Acquisitions</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </form>
+  `, `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold" onclick="submitNewUser()">Create User</button>`);
+}
+
+async function submitNewUser() {
+  const body = {
+    name: document.getElementById("new-user-name").value,
+    email: document.getElementById("new-user-email").value,
+    password: document.getElementById("new-user-password").value,
+    role: document.getElementById("new-user-role").value,
+  };
+  try {
+    await API.post("/api/users", body);
+    closeModal();
+    toast("User created", "success");
+    loadUsers();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+function editUser(id, name, email, role, active) {
+  openModal("Edit User", `
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <input type="text" id="edit-name" class="form-input" value="${esc(name)}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email</label>
+      <input type="email" class="form-input" value="${esc(email)}" disabled style="opacity:0.5">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Role</label>
+      <select id="edit-role" class="form-select">
+        <option value="acquisitions" ${role==='acquisitions'?'selected':''}>Acquisitions</option>
+        <option value="manager" ${role==='manager'?'selected':''}>Manager</option>
+        <option value="admin" ${role==='admin'?'selected':''}>Admin</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Reset Password (optional)</label>
+      <input type="password" id="edit-password" class="form-input" placeholder="Leave blank to keep current">
+    </div>
+  `, `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-gold" onclick="submitEditUser('${id}')">Save Changes</button>`);
+}
+
+async function submitEditUser(id) {
+  const body = {
+    name: document.getElementById("edit-name").value,
+    role: document.getElementById("edit-role").value,
+  };
+  const pw = document.getElementById("edit-password").value;
+  if (pw) body.password = pw;
+  try {
+    await API.patch(`/api/users/${id}`, body);
+    closeModal();
+    toast("User updated", "success");
+    loadUsers();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+async function deactivateUser(id, name) {
+  if (!confirm(`Deactivate ${name}? They will lose access immediately.`)) return;
+  try {
+    await API.post(`/api/users/${id}/deactivate`, {});
+    toast("User deactivated", "success");
+    loadUsers();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+loadUsers();
+</script>
+{% endblock %}

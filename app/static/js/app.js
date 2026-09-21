@@ -1,7 +1,8 @@
-/* DRE-Capital frontend logic — shared API helpers + UI utilities */
+/* DRE-Capital frontend logic v2 — shared API helpers + UI utilities */
 const API = {
   async get(path) {
     const r = await fetch(path);
+    if (r.status === 401) { window.location.href = "/login"; return; }
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
@@ -11,6 +12,7 @@ const API = {
       headers: { "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
+    if (r.status === 401) { window.location.href = "/login"; return; }
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
@@ -20,11 +22,13 @@ const API = {
       headers: { "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
+    if (r.status === 401) { window.location.href = "/login"; return; }
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
   async upload(path, formData) {
     const r = await fetch(path, { method: "POST", body: formData });
+    if (r.status === 401) { window.location.href = "/login"; return; }
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
@@ -103,6 +107,16 @@ function openModal(title, bodyHtml, footerHtml = "") {
   document.body.appendChild(overlay);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
   return overlay;
+}
+
+function closeModal() {
+  const m = document.querySelector(".modal-overlay");
+  if (m) m.remove();
+}
+
+async function doLogout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  window.location.href = "/login";
 }
 
 // Active nav highlight

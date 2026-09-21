@@ -43,12 +43,19 @@ def run() -> None:
     init_db()
     db = SessionLocal()
     try:
-        # User
+        # Users — admin + acquisitions operator with hashed passwords
+        from app.services.auth import hash_password
+        admin = db.query(User).filter_by(email="admin@dre-capital.com").first()
+        if not admin:
+            admin = User(email="admin@dre-capital.com", name="Acquisitions Admin", role="admin",
+                         password_hash=hash_password("capital2026"))
+            db.add(admin)
         user = db.query(User).filter_by(email="ops@dre-capital.com").first()
         if not user:
-            user = User(email="ops@dre-capital.com", name="Acquisitions Operator", role="acquisitions")
+            user = User(email="ops@dre-capital.com", name="Acquisitions Operator", role="acquisitions",
+                         password_hash=hash_password("capital2026"))
             db.add(user)
-            db.flush()
+        db.flush()
 
         # Source lists — overlapping across list types to create stack depth
         lists_spec = [
@@ -213,6 +220,34 @@ def run() -> None:
 
         db.commit()
         print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 1 contract.")
+    finally:
+        db.close()
+
+def ensure_admin() -> None:
+    """Production helper: create default admin user if none exist.
+    Reads ADMIN_EMAIL and ADMIN_PASSWORD env vars (defaults: admin@dre-capital.com / capital2026).
+    Called by Dockerfile on container startup.
+    """
+    import os
+    from app.services.auth import hash_password
+
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.role == "admin").first()
+        if existing:
+            return  # admin already exists
+
+        email = os.getenv("ADMIN_EMAIL", "admin@dre-capital.com")
+        password = os.getenv("ADMIN_PASSWORD", "capital2026")
+        admin = User(
+            email=email,
+            name="Acquisitions Admin",
+            role="admin",
+            password_hash=hash_password(password),
+        )
+        db.add(admin)
+        db.commit()
+        print(f"Created default admin: {email}")
     finally:
         db.close()
 
