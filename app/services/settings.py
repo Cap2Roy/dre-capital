@@ -147,6 +147,28 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "",
         "description": "Fallback follow-up days for unrecognized outcomes.",
     },
+    # ── LLM / Scraper ──────────────────────────────────────────────
+    "llm_api_key": {
+        "label": "LLM API Key",
+        "category": "llm",
+        "is_secret": True,
+        "env": "LLM_API_KEY",
+        "description": "API key for the LLM used to parse and analyze scraped property data (OpenAI-compatible).",
+    },
+    "llm_base_url": {
+        "label": "LLM Base URL",
+        "category": "llm",
+        "is_secret": False,
+        "env": "LLM_BASE_URL",
+        "description": "Base URL for the LLM API (default: https://api.openai.com/v1).",
+    },
+    "llm_model": {
+        "label": "LLM Model",
+        "category": "llm",
+        "is_secret": False,
+        "env": "LLM_MODEL",
+        "description": "Model name for the LLM (default: gpt-4o-mini).",
+    },
 }
 
 

@@ -338,4 +338,68 @@ class Setting(TimestampMixin, Base):
     is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
     category: Mapped[str] = mapped_column(String(64), default="general")
     label: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+# ── Property Scraper ────────────────────────────────────────────────────────
+
+class ScrapeSource(TimestampMixin, Base):
+    """A data source for property scraping — county tax site, public records API, etc."""
+    __tablename__ = "scrape_sources"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(64))  # county_tax, public_api, html
+    state: Mapped[Optional[str]] = mapped_column(String(2))
+    county: Mapped[Optional[str]] = mapped_column(String(120))
+    # Search parameters stored as JSON string
+    search_params: Mapped[Optional[str]] = mapped_column(Text)  # JSON: {"zip":"75201","min_value":100000,...}
+    # Auth/API key if needed
+    api_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    jobs: Mapped[list["ScrapeJob"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+
+
+class ScrapeJobStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ScrapeJob(TimestampMixin, Base):
+    """A single scrape run against a source — tracks progress and results."""
+    __tablename__ = "scrape_jobs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    source_id: Mapped[str] = mapped_column(String(32), ForeignKey("scrape_sources.id"), index=True)
+    status: Mapped[ScrapeJobStatus] = mapped_column(Enum(ScrapeJobStatus), default=ScrapeJobStatus.PENDING, index=True)
+    # Search overrides for this specific job
+    search_params: Mapped[Optional[str]] = mapped_column(Text)  # JSON
+    # Progress
+    total_found: Mapped[int] = mapped_column(Integer, default=0)
+    imported: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    # Error info
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Raw + processed data (JSON string of results)
+    raw_results: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # LLM analysis summary
+    llm_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    source: Mapped["ScrapeSource"] = relationship(back_populates="jobs")
+    results: Mapped[list["ScrapeResult"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class ScrapeResult(TimestampMixin, Base):
+    """An individual property found by a scrape job, pending review/import."""
+    __tablename__ = "scrape_results"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    job_id: Mapped[str] = mapped_column(String(32), ForeignKey("scrape_jobs.id"), index=True)
+    # Extracted property data (JSON)
+    property_data: Mapped[str] = mapped_column(Text)  # JSON: address, owner, beds, baths, sqft, etc.
+    # LLM analysis of this property
+    llm_analysis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Import status
+    imported: Mapped[bool] = mapped_column(Boolean, default=False)
+    imported_lead_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    job: Mapped["ScrapeJob"] = relationship(back_populates="results")

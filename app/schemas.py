@@ -243,3 +243,61 @@ class SourceListOut(ORMBase):
     state: Optional[str] = None
     record_count: int
     imported_at: datetime
+
+# ── Scraper ──────────────────────────────────────────────────────────────────
+
+class ScrapeSourceCreate(BaseModel):
+    name: str
+    url: str
+    source_type: str  # county_tax, public_api, html
+    state: Optional[str] = None
+    county: Optional[str] = None
+    search_params: Optional[str] = None  # JSON string
+    api_key: Optional[str] = None
+
+
+class ScrapeSourceOut(ORMBase):
+    id: str
+    name: str
+    url: str
+    source_type: str
+    state: Optional[str] = None
+    county: Optional[str] = None
+    search_params: Optional[str] = None
+    active: bool
+    created_at: datetime
+
+
+class ScrapeJobCreate(BaseModel):
+    source_id: str
+    search_params: Optional[str] = None  # JSON overrides
+
+
+class ScrapeResultOut(ORMBase):
+    id: str
+    job_id: str
+    property_data: str  # JSON
+    llm_analysis: Optional[str] = None
+    imported: bool
+    imported_lead_id: Optional[str] = None
+
+
+class ScrapeJobOut(ORMBase):
+    id: str
+    source_id: str
+    status: str
+    search_params: Optional[str] = None
+    total_found: int
+    imported: int
+    skipped: int
+    error_message: Optional[str] = None
+    llm_summary: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class ScrapeImportRequest(BaseModel):
+    result_ids: list[str]
+    list_type: str = "probate"
+    list_name: Optional[str] = None

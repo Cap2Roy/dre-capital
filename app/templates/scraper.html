@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+{% block title %}Property Scraper{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Property Scraper</h1>
+  <p class="page-sub">Find properties from public data sources — county tax sites, public records APIs, and HTML listings. The LLM parses and analyzes each property for motivated-seller signals.</p>
+</div>
+
+<div id="llm-banner" class="llm-banner" style="display:none;">
+  <span class="llm-banner-icon">🤖</span>
+  <span id="llm-banner-text"></span>
+</div>
+
+<div class="scraper-layout">
+  <!-- Left: Sources -->
+  <div class="scraper-sources">
+    <div class="card">
+      <div class="card-header">
+        <h2>Data Sources</h2>
+        <button class="btn btn-sm btn-gold" onclick="showAddSource()">+ Add Source</button>
+      </div>
+      <div id="sources-list" class="source-list">
+        <p class="text-muted">Loading sources…</p>
+      </div>
+    </div>
+
+    <!-- Add/Edit source form (hidden by default) -->
+    <div id="source-form-card" class="card" style="display:none;">
+      <div class="card-header">
+        <h2 id="source-form-title">Add Data Source</h2>
+        <button class="btn btn-sm btn-ghost" onclick="hideSourceForm()">Cancel</button>
+      </div>
+      <form id="source-form" class="form-stack">
+        <input type="hidden" id="source-id">
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input type="text" id="source-name" class="form-input" placeholder="e.g. Dallas County Tax Records" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">URL</label>
+          <input type="url" id="source-url" class="form-input" placeholder="https://www.dallascad.org/SearchRes.asp" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Source Type</label>
+            <select id="source-type" class="form-input">
+              <option value="county_tax">County Tax / Property Appraiser (HTML)</option>
+              <option value="public_api">Public Records API (JSON)</option>
+              <option value="html">Generic HTML Page</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">State</label>
+            <input type="text" id="source-state" class="form-input" placeholder="TX" maxlength="2">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">County</label>
+          <input type="text" id="source-county" class="form-input" placeholder="Dallas">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Search Params (JSON)</label>
+          <textarea id="source-params" class="form-input form-textarea" placeholder='{"zip":"75201","min_value":100000}' rows="3"></textarea>
+          <small class="form-hint">JSON object with search parameters passed to the source</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key (optional)</label>
+          <input type="password" id="source-api-key" class="form-input" placeholder="API key if the source requires auth">
+        </div>
+        <button type="submit" class="btn btn-gold" id="source-save-btn">Save Source</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right: Jobs + Results -->
+  <div class="scraper-jobs">
+    <div class="card">
+      <div class="card-header">
+        <h2>Scrape Jobs</h2>
+        <button class="btn btn-sm btn-ghost" onclick="loadJobs()">Refresh</button>
+      </div>
+      <div id="jobs-list">
+        <p class="text-muted">Run a scrape from a source to see results here.</p>
+      </div>
+    </div>
+
+    <!-- Results panel -->
+    <div id="results-panel" class="card" style="display:none;">
+      <div class="card-header">
+        <h2 id="results-title">Results</h2>
+        <div class="results-actions">
+          <button class="btn btn-sm btn-gold" onclick="showImportDialog()">Import Selected</button>
+        </div>
+      </div>
+      <div id="llm-summary" class="llm-summary" style="display:none;"></div>
+      <div id="results-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Import dialog -->
+<div id="import-dialog" class="modal-overlay" style="display:none;" onclick="if(event.target===this)hideImportDialog()">
+  <div class="modal-card">
+    <h2>Import Properties</h2>
+    <p id="import-count" class="text-muted"></p>
+    <div class="form-group">
+      <label class="form-label">List Type</label>
+      <select id="import-list-type" class="form-input">
+        <option value="tax_delinquent">Tax Delinquent</option>
+        <option value="pre_foreclosure">Pre-Foreclosure</option>
+        <option value="probate">Probate</option>
+        <option value="divorce">Divorce</option>
+        <option value="absentee_owner">Absentee Owner</option>
+        <option value="tired_landlord">Tired Landlord</option>
+        <option value="vacant_code_violation">Vacant / Code Violation</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">List Name (optional)</label>
+      <input type="text" id="import-list-name" class="form-input" placeholder="Auto-generated if blank">
+    </div>
+    <div class="form-row" style="justify-content:flex-end; gap:8px;">
+      <button class="btn btn-ghost" onclick="hideImportDialog()">Cancel</button>
+      <button class="btn btn-gold" onclick="doImport()" id="import-btn">Import</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const API = '/api/scraper';
+  let currentJobId = null;
+  let currentResults = [];
+  let selectedIds = new Set();
+
+  async function api(path, opts = {}) {
+    const r = await fetch(API + path, opts);
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(e.detail || 'Request failed');
+    }
+    return r.json();
+  }
+
+  async function checkLLM() {
+    try {
+      const status = await api('/llm-status');
+      const banner = document.getElementById('llm-banner');
+      const text = document.getElementById('llm-banner-text');
+      if (status.configured) {
+        banner.className = 'llm-banner llm-on';
+        text.textContent = 'LLM is configured — properties will be parsed and analyzed automatically.';
+      } else {
+        banner.className = 'llm-banner llm-off';
+        text.textContent = 'LLM not configured — using HTML parser only. Set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL env vars for AI-assisted parsing.';
+      }
+      banner.style.display = 'flex';
+    } catch {}
+  }
+
+  // ── Sources ───────────────────────────────────────────────────
+  async function loadSources() {
+    try {
+      const sources = await api('/sources');
+      const el = document.getElementById('sources-list');
+      if (!sources.length) {
+        el.innerHTML = '<p class="text-muted">No sources yet. Click "Add Source" to create one.</p>';
+        return;
+      }
+      el.innerHTML = sources.map(s => `
+        <div class="source-item" data-id="${s.id}">
+          <div class="source-header">
+            <div>
+              <div class="source-name">${esc(s.name)}</div>
+              <div class="source-meta">${esc(s.source_type.replace('_',' '))}${s.state ? ' · '+esc(s.state) : ''}${s.county ? ' · '+esc(s.county) : ''}</div>
+            </div>
+            <div class="source-actions">
+              <button class="btn btn-sm btn-gold" onclick="runScrape('${s.id}')" ${!s.active ? 'disabled' : ''}>Scrape</button>
+              <button class="btn btn-sm btn-ghost" onclick="editSource('${s.id}')">Edit</button>
+              <button class="btn btn-sm btn-ghost" onclick="deleteSource('${s.id}')">Del</button>
+            </div>
+          </div>
+          <div class="source-url">${esc(s.url)}</div>
+        </div>
+      `).join('');
+    } catch (e) {
+      document.getElementById('sources-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  function showAddSource() {
+    document.getElementById('source-form-card').style.display = '';
+    document.getElementById('source-form-title').textContent = 'Add Data Source';
+    document.getElementById('source-form').reset();
+    document.getElementById('source-id').value = '';
+    document.getElementById('source-type').value = 'county_tax';
+  }
+
+  function hideSourceForm() {
+    document.getElementById('source-form-card').style.display = 'none';
+  }
+
+  async function editSource(id) {
+    const sources = await api('/sources');
+    const s = sources.find(x => x.id === id);
+    if (!s) return;
+    document.getElementById('source-form-card').style.display = '';
+    document.getElementById('source-form-title').textContent = 'Edit Source';
+    document.getElementById('source-id').value = s.id;
+    document.getElementById('source-name').value = s.name;
+    document.getElementById('source-url').value = s.url;
+    document.getElementById('source-type').value = s.source_type;
+    document.getElementById('source-state').value = s.state || '';
+    document.getElementById('source-county').value = s.county || '';
+    document.getElementById('source-params').value = s.search_params || '';
+    document.getElementById('source-api-key').value = '';
+  }
+
+  async function deleteSource(id) {
+    if (!confirm('Delete this source and all its jobs?')) return;
+    try {
+      await api('/sources/' + id, { method: 'DELETE' });
+      loadSources();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  document.getElementById('source-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('source-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const id = document.getElementById('source-id').value;
+    const body = {
+      name: document.getElementById('source-name').value,
+      url: document.getElementById('source-url').value,
+      source_type: document.getElementById('source-type').value,
+      state: document.getElementById('source-state').value || null,
+      county: document.getElementById('source-county').value || null,
+      search_params: document.getElementById('source-params').value || null,
+      api_key: document.getElementById('source-api-key').value || null,
+    };
+    try {
+      if (id) {
+        await api('/sources/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      } else {
+        await api('/sources', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      }
+      hideSourceForm();
+      loadSources();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Save Source';
+  });
+
+  // ── Jobs ──────────────────────────────────────────────────────
+  async function runScrape(sourceId) {
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = 'Scraping…'; }
+    try {
+      const job = await api('/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId }),
+      });
+      currentJobId = job.id;
+      loadJobs();
+      showResults(job.id);
+    } catch (e) {
+      alert('Scrape failed: ' + e.message);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Scrape'; }
+  }
+
+  async function loadJobs() {
+    try {
+      const jobs = await api('/jobs');
+      const el = document.getElementById('jobs-list');
+      if (!jobs.length) {
+        el.innerHTML = '<p class="text-muted">No scrape jobs yet.</p>';
+        return;
+      }
+      el.innerHTML = jobs.map(j => {
+        const statusClass = j.status === 'completed' ? 'badge-ok' : j.status === 'failed' ? 'badge-danger' : j.status === 'running' ? 'badge-warn' : 'badge-muted';
+        const date = new Date(j.created_at).toLocaleString();
+        return `
+          <div class="job-item" data-id="${j.id}" onclick="showResults('${j.id}')">
+            <div class="job-header">
+              <span class="badge ${statusClass}">${esc(j.status)}</span>
+              <span class="job-date">${date}</span>
+            </div>
+            <div class="job-stats">
+              Found: ${j.total_found} · Imported: ${j.imported} · Skipped: ${j.skipped}
+            </div>
+            ${j.error_message ? `<div class="job-error">${esc(j.error_message)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('jobs-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  async function showResults(jobId) {
+    currentJobId = jobId;
+    const panel = document.getElementById('results-panel');
+    panel.style.display = '';
+    const title = document.getElementById('results-title');
+    title.textContent = 'Loading results…';
+    document.getElementById('results-list').innerHTML = '';
+    document.getElementById('llm-summary').style.display = 'none';
+    selectedIds.clear();
+
+    try {
+      const [job, results] = await Promise.all([
+        api('/jobs/' + jobId),
+        api('/jobs/' + jobId + '/results'),
+      ]);
+      currentResults = results;
+      title.textContent = `Results — ${results.length} properties found`;
+
+      // LLM summary
+      if (job.llm_summary) {
+        const sumEl = document.getElementById('llm-summary');
+        sumEl.innerHTML = '<strong>🤖 AI Summary:</strong> ' + esc(job.llm_summary);
+        sumEl.style.display = '';
+      }
+
+      const listEl = document.getElementById('results-list');
+      if (!results.length) {
+        listEl.innerHTML = '<p class="text-muted">No properties found in this scrape.</p>';
+        return;
+      }
+
+      listEl.innerHTML = results.map(r => {
+        let data = {};
+        try { data = JSON.parse(r.property_data); } catch {}
+        const addr = data.property_address || 'Unknown address';
+        const owner = data.owner_name || '—';
+        const details = [
+          data.property_city, data.property_state, data.property_zip,
+          data.beds ? data.beds + ' bd' : null,
+          data.baths ? data.baths + ' ba' : null,
+          data.sqft ? data.sqft + ' sqft' : null,
+          data.year_built ? 'built ' + data.year_built : null,
+          data.assessed_value ? '$' + Number(data.assessed_value).toLocaleString() : null,
+        ].filter(Boolean).join(' · ');
+        const imported = r.imported ? '<span class="badge badge-ok">Imported</span>' : '';
+        return `
+          <div class="result-item ${r.imported ? 'result-imported' : ''}">
+            <div class="result-check">
+              ${r.imported ? '✓' : `<input type="checkbox" data-id="${r.id}" onchange="toggleSelect('${r.id}')">`}
+            </div>
+            <div class="result-body">
+              <div class="result-header">
+                <strong>${esc(addr)}</strong>
+                ${imported}
+              </div>
+              <div class="result-meta">Owner: ${esc(owner)} · ${esc(details || '')}</div>
+              ${r.llm_analysis ? `<div class="result-analysis">🤖 ${esc(r.llm_analysis)}</div>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('results-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  function toggleSelect(id) {
+    if (selectedIds.has(id)) selectedIds.delete(id);
+    else selectedIds.add(id);
+  }
+
+  function showImportDialog() {
+    if (selectedIds.size === 0) {
+      alert('Select at least one property to import.');
+      return;
+    }
+    document.getElementById('import-count').textContent = `${selectedIds.size} property(ies) will be imported as leads.`;
+    document.getElementById('import-dialog').style.display = '';
+  }
+
+  function hideImportDialog() {
+    document.getElementById('import-dialog').style.display = 'none';
+  }
+
+  async function doImport() {
+    const btn = document.getElementById('import-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+    const listType = document.getElementById('import-list-type').value;
+    const listName = document.getElementById('import-list-name').value || null;
+    try {
+      const result = await api('/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result_ids: [...selectedIds], list_type: listType, list_name: listName }),
+      });
+      hideImportDialog();
+      alert(`Imported ${result.imported} leads, skipped ${result.skipped} duplicates.`);
+      selectedIds.clear();
+      showResults(currentJobId);
+      loadJobs();
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Import';
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────
+  function esc(s) {
+    if (s == null) return '';
+    const d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+
+  // Expose to inline handlers
+  window.showAddSource = showAddSource;
+  window.hideSourceForm = hideSourceForm;
+  window.editSource = editSource;
+  window.deleteSource = deleteSource;
+  window.runScrape = runScrape;
+  window.showResults = showResults;
+  window.toggleSelect = toggleSelect;
+  window.showImportDialog = showImportDialog;
+  window.hideImportDialog = hideImportDialog;
+  window.doImport = doImport;
+  window.loadJobs = loadJobs;
+
+  // Init
+  checkLLM();
+  loadSources();
+  loadJobs();
+})();
+</script>
+{% endblock %}
