@@ -56,10 +56,12 @@ gcloud run deploy "$SERVICE_NAME" \
   --memory 1Gi --cpu 1 \
   --min-instances 1 --max-instances 10 \
   --set-secrets "SECRET_KEY=dre-capital-secret-key:latest" \
-  --set-env-vars "APP_BASE_URL=https://${SERVICE_NAME}-${REGION}.run.app" \
+  --set-env-vars "APP_BASE_URL=https://${SERVICE_NAME}-$(gcloud projects describe ${PROJECT_ID} --format='value(projectNumber)').${REGION}.run.app" \
   --set-env-vars "ADMIN_EMAIL=${ADMIN_EMAIL}" \
   --set-env-vars "ADMIN_PASSWORD=${ADMIN_PASSWORD}" \
   --set-env-vars "DATABASE_URL=sqlite:///./dre_capital.db" \
+  --set-env-vars "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}" \
+  --set-env-vars "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}" \
   --project "$PROJECT_ID" --quiet
 
 # ── Done ─────────────────────────────────────────────────────

@@ -22,6 +22,9 @@ class Settings:
     twilio_auth_token: str
     twilio_from_number: str
     app_base_url: str
+    # Google OAuth
+    google_client_id: str
+    google_client_secret: str
     # Skip tracing
     skiptrace_provider: str
     skiptrace_api_key: str
@@ -36,6 +39,8 @@ class Settings:
         self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.twilio_from_number = os.getenv("TWILIO_FROM_NUMBER", "")
         self.app_base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
+        self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        self.google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
         self.skiptrace_provider = os.getenv("SKIPTRACE_PROVIDER", "mock")
         self.skiptrace_api_key = os.getenv("SKIPTRACE_API_KEY", "")
         self.comps_provider = os.getenv("COMPS_PROVIDER", "mock")
@@ -48,6 +53,10 @@ class Settings:
     @property
     def twilio_configured(self) -> bool:
         return bool(self.twilio_account_sid and self.twilio_auth_token and self.twilio_from_number)
+
+    @property
+    def google_auth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
 
 
 @lru_cache

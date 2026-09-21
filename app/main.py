@@ -18,7 +18,7 @@ from app.routers import (
 )
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/static"}
 
 
 @asynccontextmanager
@@ -149,4 +149,6 @@ def page_settings(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 def page_login(request: Request):
     """Login page — public, no auth required."""
-    return templates.TemplateResponse("login.html", {"request": request, "page": "login"})
+    from app.config import get_settings
+    s = get_settings()
+    return templates.TemplateResponse("login.html", {"request": request, "page": "login", "google_auth_enabled": s.google_auth_enabled})

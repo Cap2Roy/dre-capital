@@ -248,8 +248,6 @@ def ensure_admin() -> None:
             )
             db.add(admin)
             db.commit()
-            print(f"Created default admin: {email}")
-
         # Create acquisitions operator if missing
         ops = db.query(User).filter(User.role == "acquisitions").first()
         if not ops:
@@ -262,6 +260,19 @@ def ensure_admin() -> None:
             db.add(ops)
             db.commit()
             print("Created default acquisitions operator: ops@dre-capital.com")
+
+        # Create the Roy admin account if missing
+        roy = db.query(User).filter(User.email == "roy@betterai360.com").first()
+        if not roy:
+            roy = User(
+                email="roy@betterai360.com",
+                name="Roy",
+                role="admin",
+                password_hash=hash_password("capital2026"),
+            )
+            db.add(roy)
+            db.commit()
+            print("Created admin: roy@betterai360.com")
 
         # Seed demo data if DB is empty
         lead_count = db.query(Lead).count()

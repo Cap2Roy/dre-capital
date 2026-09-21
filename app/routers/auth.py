@@ -1,19 +1,20 @@
-"""Authentication router: login, logout, current-user, password change."""
+"""Authentication router: login, logout, current-user, password change, Google OAuth."""
 from __future__ import annotations
 
+import urllib.parse
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import User
 from app.services.auth import (
-    SESSION_COOKIE,
-    authenticate_user,
     clear_session_cookie,
-    create_user,
     get_current_user_from_request,
-    hash_password,
+    get_user_by_email,
     set_session_cookie,
     update_user_password,
 )
@@ -42,6 +43,94 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+@router.get("/google/login")
+def google_login(request: Request):
+    """Redirect to Google's OAuth consent screen."""
+    s = get_settings()
+    if not s.google_auth_enabled:
+        raise HTTPException(503, "Google OAuth is not configured")
+    redirect_uri = f"{s.app_base_url}/api/auth/google/callback"
+    params = urllib.parse.urlencode({
+        "client_id": s.google_client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "prompt": "select_account",
+    })
+    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+
+@router.get("/google/callback")
+async def google_callback(request: Request):
+    """Handle Google's OAuth callback — exchange code, find/create user, set session."""
+    import httpx
+
+    s = get_settings()
+    if not s.google_auth_enabled:
+        raise HTTPException(503, "Google OAuth is not configured")
+
+    code = request.query_params.get("code")
+    if not code:
+        return RedirectResponse(f"{s.app_base_url}/login?error=oauth_denied")
+
+    redirect_uri = f"{s.app_base_url}/api/auth/google/callback"
+
+    # Exchange authorization code for tokens
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": s.google_client_id,
+                "client_secret": s.google_client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_resp.status_code != 200:
+            return RedirectResponse(f"{s.app_base_url}/login?error=oauth_token_failed")
+        tokens = token_resp.json()
+
+        # Fetch user info from Google
+        user_resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        if user_resp.status_code != 200:
+            return RedirectResponse(f"{s.app_base_url}/login?error=oauth_userinfo_failed")
+        google_user = user_resp.json()
+
+    email = google_user.get("email", "").lower().strip()
+    if not email:
+        return RedirectResponse(f"{s.app_base_url}/login?error=oauth_no_email")
+
+    # Find or create the user
+    db: Session = next(get_db())
+    try:
+        user = get_user_by_email(db, email)
+        if not user:
+            # Auto-create new Google sign-ins as acquisitions role
+            name = google_user.get("name") or email.split("@")[0]
+            user = User(
+                email=email,
+                name=name,
+                role="acquisitions",
+                password_hash=None,  # OAuth users have no password
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif not user.active:
+            return RedirectResponse(f"{s.app_base_url}/login?error=account_deactivated")
+
+        # Set session cookie and redirect to dashboard
+        response = RedirectResponse(s.app_base_url)
+        set_session_cookie(response, user.id)
+        return response
+    finally:
+        db.close()
+
+
 @router.post("/login")
 def login(body: LoginRequest, request: Request, response: Response):
     """Authenticate and set session cookie."""
@@ -55,6 +144,12 @@ def login(body: LoginRequest, request: Request, response: Response):
     finally:
         db.close()
 
+
+@router.get("/google/config")
+def google_config():
+    """Return whether Google OAuth is enabled (for the login page UI)."""
+    s = get_settings()
+    return {"enabled": s.google_auth_enabled}
 
 @router.post("/logout")
 def logout(response: Response):

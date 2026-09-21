@@ -567,6 +567,22 @@ table.data-table {
   border-radius: var(--r-sm); font-size: var(--fs-sm); margin-bottom: var(--sp-4);
 }
 
+.login-divider {
+  display: flex; align-items: center; gap: var(--sp-3);
+  margin: var(--sp-5) 0; color: var(--text-3); font-size: var(--fs-sm);
+}
+.login-divider::before, .login-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+.btn-google {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
+ background: var(--surface); color: var(--navy-800); border: 1px solid var(--border);
+ font-weight: var(--fw-medium); text-decoration: none;
+}
+.btn-google:hover { background: var(--surface-2); border-color: var(--navy-300); }
+.google-icon { flex-shrink: 0; }
+
 .login-demo {
   margin-top: var(--sp-6); padding: var(--sp-4); background: var(--surface-2);
   border-radius: var(--r-md); text-align: center;
