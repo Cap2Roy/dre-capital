@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.models import User
 from app.services.auth import (
+    authenticate_user,
     clear_session_cookie,
     get_current_user_from_request,
     get_user_by_email,
