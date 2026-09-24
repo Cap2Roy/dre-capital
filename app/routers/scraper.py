@@ -15,7 +15,7 @@ from app.schemas import (
     ScrapeSourceCreate,
     ScrapeSourceOut,
 )
-from app.services.scraper import import_scrape_results, run_scrape_job
+from app.services.scraper import get_source_directory, import_scrape_results, run_scrape_job
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
@@ -160,6 +160,13 @@ def import_results(
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return result
+
+# ── Source directory ──────────────────────────────────────────────────────────
+
+@router.get("/directory")
+def list_directory():
+    """List pre-configured, known-working data sources that can be added with one click."""
+    return get_source_directory()
 
 
 # ── LLM status ────────────────────────────────────────────────────────────────

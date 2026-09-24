@@ -169,6 +169,13 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "LLM_MODEL",
         "description": "Model name for the LLM (default: gpt-4o-mini).",
     },
+    "rentcast_api_key": {
+        "label": "RentCast API Key",
+        "category": "llm",
+        "is_secret": True,
+        "env": "RENTCAST_API_KEY",
+        "description": "API key for RentCast property data API (free tier: 50 calls/mo). Get one at https://app.rentcast.io/api",
+    },
 }
 
 

@@ -3,12 +3,23 @@
 {% block content %}
 <div class="page-header">
   <h1>Property Scraper</h1>
-  <p class="page-sub">Find properties from public data sources — county tax sites, public records APIs, and HTML listings. The LLM parses and analyzes each property for motivated-seller signals.</p>
+  <p class="page-sub">Find properties from public data sources — RentCast API, county tax sites, public records APIs, and HTML listings. The LLM parses and analyzes each property for motivated-seller signals.</p>
 </div>
 
 <div id="llm-banner" class="llm-banner" style="display:none;">
   <span class="llm-banner-icon">🤖</span>
   <span id="llm-banner-text"></span>
+</div>
+
+<!-- Source Directory: pre-configured working sources -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header">
+    <h2>📋 Source Directory</h2>
+    <button class="btn btn-sm btn-ghost" onclick="loadDirectory()">Refresh</button>
+  </div>
+  <div id="directory-list">
+    <p class="text-muted">Loading available sources…</p>
+  </div>
 </div>
 
 <div class="scraper-layout">
@@ -34,16 +45,17 @@
         <input type="hidden" id="source-id">
         <div class="form-group">
           <label class="form-label">Name</label>
-          <input type="text" id="source-name" class="form-input" placeholder="e.g. Dallas County Tax Records" required>
+          <input type="text" id="source-name" class="form-input" placeholder="e.g. Houston Absentee Owners" required>
         </div>
         <div class="form-group">
           <label class="form-label">URL</label>
-          <input type="url" id="source-url" class="form-input" placeholder="https://www.dallascad.org/SearchRes.asp" required>
+          <input type="url" id="source-url" class="form-input" placeholder="https://api.rentcast.io/v1/properties" required>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Source Type</label>
             <select id="source-type" class="form-input">
+              <option value="rentcast">RentCast API (JSON — recommended)</option>
               <option value="county_tax">County Tax / Property Appraiser (HTML)</option>
               <option value="public_api">Public Records API (JSON)</option>
               <option value="html">Generic HTML Page</option>
@@ -56,16 +68,17 @@
         </div>
         <div class="form-group">
           <label class="form-label">County</label>
-          <input type="text" id="source-county" class="form-input" placeholder="Dallas">
+          <input type="text" id="source-county" class="form-input" placeholder="Harris">
         </div>
         <div class="form-group">
           <label class="form-label">Search Params (JSON)</label>
-          <textarea id="source-params" class="form-input form-textarea" placeholder='{"zip":"75201","min_value":100000}' rows="3"></textarea>
-          <small class="form-hint">JSON object with search parameters passed to the source</small>
+          <textarea id="source-params" class="form-input form-textarea" placeholder='{"city":"Houston","state":"TX","limit":50}' rows="3"></textarea>
+          <small class="form-hint">JSON object with search parameters. For RentCast: city, state, zipCode, limit, ownerOccupied, propertyType, etc.</small>
         </div>
         <div class="form-group">
           <label class="form-label">API Key (optional)</label>
-          <input type="password" id="source-api-key" class="form-input" placeholder="API key if the source requires auth">
+          <input type="password" id="source-api-key" class="form-input" placeholder="RentCast API key or other auth token">
+          <small class="form-hint">Get a free RentCast API key at <a href="https://app.rentcast.io/api" target="_blank">app.rentcast.io/api</a> (50 calls/mo free)</small>
         </div>
         <button type="submit" class="btn btn-gold" id="source-save-btn">Save Source</button>
       </form>
@@ -152,10 +165,62 @@
         text.textContent = 'LLM is configured — properties will be parsed and analyzed automatically.';
       } else {
         banner.className = 'llm-banner llm-off';
-        text.textContent = 'LLM not configured — using HTML parser only. Set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL env vars for AI-assisted parsing.';
+        text.textContent = 'LLM not configured — using HTML parser and heuristic analysis. Set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL env vars for AI-assisted parsing.';
       }
       banner.style.display = 'flex';
     } catch {}
+  }
+
+  // ── Source Directory ────────────────────────────────────────────
+  async function loadDirectory() {
+    try {
+      const dir = await api('/directory');
+      const el = document.getElementById('directory-list');
+      if (!dir.length) {
+        el.innerHTML = '<p class="text-muted">No pre-configured sources available.</p>';
+        return;
+      }
+      el.innerHTML = dir.map((s, i) => `
+        <div class="source-item directory-item" style="margin-bottom:8px; padding:12px; border:1px solid var(--border); border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div style="flex:1;">
+              <div class="source-name">${esc(s.name)}</div>
+              <div class="source-meta">${esc(s.source_type)}</div>
+              <p style="margin:6px 0; font-size:13px; color:var(--text-muted);">${esc(s.description)}</p>
+              <div style="font-size:12px; color:var(--text-muted);">Example params: <code>${esc(s.search_hint)}</code></div>
+            </div>
+            <button class="btn btn-sm btn-gold" onclick="addFromDirectory(${i})">+ Add</button>
+          </div>
+        </div>
+      `).join('');
+      // Store directory data for addFromDirectory
+      window._directory = dir;
+    } catch (e) {
+      document.getElementById('directory-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  async function addFromDirectory(idx) {
+    const s = window._directory[idx];
+    if (!s) return;
+    try {
+      await api('/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: s.name,
+          url: s.url,
+          source_type: s.source_type,
+          state: s.state || null,
+          county: s.county || null,
+          search_params: s.search_hint || null,
+        }),
+      });
+      loadSources();
+      alert('Source added! Click "Scrape" to run it. If it needs an API key, edit the source to add one.');
+    } catch (e) {
+      alert('Error adding source: ' + e.message);
+    }
   }
 
   // ── Sources ───────────────────────────────────────────────────
@@ -164,7 +229,7 @@
       const sources = await api('/sources');
       const el = document.getElementById('sources-list');
       if (!sources.length) {
-        el.innerHTML = '<p class="text-muted">No sources yet. Click "Add Source" to create one.</p>';
+        el.innerHTML = '<p class="text-muted">No sources yet. Add one from the directory above or click "Add Source".</p>';
         return;
       }
       el.innerHTML = sources.map(s => `
@@ -193,7 +258,7 @@
     document.getElementById('source-form-title').textContent = 'Add Data Source';
     document.getElementById('source-form').reset();
     document.getElementById('source-id').value = '';
-    document.getElementById('source-type').value = 'county_tax';
+    document.getElementById('source-type').value = 'rentcast';
   }
 
   function hideSourceForm() {
@@ -269,6 +334,9 @@
       currentJobId = job.id;
       loadJobs();
       showResults(job.id);
+      if (job.status === 'failed') {
+        alert('Scrape failed: ' + (job.error_message || 'Unknown error'));
+      }
     } catch (e) {
       alert('Scrape failed: ' + e.message);
     }
@@ -287,15 +355,15 @@
         const statusClass = j.status === 'completed' ? 'badge-ok' : j.status === 'failed' ? 'badge-danger' : j.status === 'running' ? 'badge-warn' : 'badge-muted';
         const date = new Date(j.created_at).toLocaleString();
         return `
-          <div class="job-item" data-id="${j.id}" onclick="showResults('${j.id}')">
-            <div class="job-header">
+          <div class="job-item" data-id="${j.id}" onclick="showResults('${j.id}')" style="cursor:pointer; padding:10px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px;">
+            <div class="job-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
               <span class="badge ${statusClass}">${esc(j.status)}</span>
-              <span class="job-date">${date}</span>
+              <span class="job-date" style="font-size:12px; color:var(--text-muted);">${date}</span>
             </div>
-            <div class="job-stats">
+            <div class="job-stats" style="font-size:13px;">
               Found: ${j.total_found} · Imported: ${j.imported} · Skipped: ${j.skipped}
             </div>
-            ${j.error_message ? `<div class="job-error">${esc(j.error_message)}</div>` : ''}
+            ${j.error_message ? `<div class="job-error" style="margin-top:6px; padding:6px; background:rgba(220,53,69,0.1); border-radius:4px; font-size:12px; color:#dc3545;">${esc(j.error_message)}</div>` : ''}
           </div>
         `;
       }).join('');
@@ -349,18 +417,20 @@
           data.assessed_value ? '$' + Number(data.assessed_value).toLocaleString() : null,
         ].filter(Boolean).join(' · ');
         const imported = r.imported ? '<span class="badge badge-ok">Imported</span>' : '';
+        const absentee = data.owner_occupied === false ? '<span class="badge badge-warn">Absentee</span>' : '';
+        const llc = data.owner_is_llc ? '<span class="badge badge-muted">LLC</span>' : '';
         return `
-          <div class="result-item ${r.imported ? 'result-imported' : ''}">
+          <div class="result-item ${r.imported ? 'result-imported' : ''}" style="display:flex; gap:10px; padding:12px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px;">
             <div class="result-check">
               ${r.imported ? '✓' : `<input type="checkbox" data-id="${r.id}" onchange="toggleSelect('${r.id}')">`}
             </div>
-            <div class="result-body">
-              <div class="result-header">
+            <div class="result-body" style="flex:1;">
+              <div class="result-header" style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
                 <strong>${esc(addr)}</strong>
-                ${imported}
+                ${imported} ${absentee} ${llc}
               </div>
-              <div class="result-meta">Owner: ${esc(owner)} · ${esc(details || '')}</div>
-              ${r.llm_analysis ? `<div class="result-analysis">🤖 ${esc(r.llm_analysis)}</div>` : ''}
+              <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${esc(owner)} · ${esc(details || '')}</div>
+              ${r.llm_analysis ? `<div class="result-analysis" style="margin-top:6px; padding:6px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px;">🤖 ${esc(r.llm_analysis)}</div>` : ''}
             </div>
           </div>
         `;
@@ -432,9 +502,12 @@
   window.hideImportDialog = hideImportDialog;
   window.doImport = doImport;
   window.loadJobs = loadJobs;
+  window.loadDirectory = loadDirectory;
+  window.addFromDirectory = addFromDirectory;
 
   // Init
   checkLLM();
+  loadDirectory();
   loadSources();
   loadJobs();
 })();

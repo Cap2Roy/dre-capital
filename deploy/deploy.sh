@@ -65,6 +65,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars "LLM_API_KEY=${LLM_API_KEY:-}" \
   --set-env-vars "LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}" \
   --set-env-vars "LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}" \
+  --set-env-vars "RENTCAST_API_KEY=${RENTCAST_API_KEY:-}" \
   --project "$PROJECT_ID" --quiet
 
 # ── Done ─────────────────────────────────────────────────────

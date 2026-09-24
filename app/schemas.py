@@ -249,7 +249,7 @@ class SourceListOut(ORMBase):
 class ScrapeSourceCreate(BaseModel):
     name: str
     url: str
-    source_type: str  # county_tax, public_api, html
+    source_type: str  # rentcast, county_tax, public_api, html
     state: Optional[str] = None
     county: Optional[str] = None
     search_params: Optional[str] = None  # JSON string

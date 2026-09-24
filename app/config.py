@@ -33,7 +33,8 @@ class Settings:
     # LLM (scraper parsing/analysis — OpenAI-compatible)
     llm_api_key: str
     llm_base_url: str
-    llm_model: str
+    # RentCast (property data API — scraper)
+    rentcast_api_key: str
 
     def __init__(self) -> None:
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./dre_capital.db")
@@ -49,7 +50,7 @@ class Settings:
         self.comps_provider = os.getenv("COMPS_PROVIDER", "mock")
         self.llm_api_key = os.getenv("LLM_API_KEY", "")
         self.llm_base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-        self.llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.rentcast_api_key = os.getenv("RENTCAST_API_KEY", "")
 
     @property
     def is_sqlite(self) -> bool:
