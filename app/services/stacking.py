@@ -82,7 +82,19 @@ def get_or_create_lead(
         stmt = stmt.where(Lead.property_zip == property_zip)
     lead = db.execute(stmt).scalar_one_or_none()
 
-    # Fallback: normalized match (catches "123 Main St" vs "123 main st.")
+    # Fallback: case-insensitive / loose match on the raw address first, so we
+    # don't scan the whole table for the common "123 Main St" vs "123 main st"
+    # mismatch.  A full normalized scan is kept only as a rare last resort.
+    if lead is None:
+        pat = f"%{property_address}%"
+        candidates = db.execute(
+            select(Lead).where(Lead.property_address.ilike(pat))
+        ).scalars().all()
+        for l in candidates:
+            if address_key(l.property_address, l.property_zip) == key:
+                lead = l
+                break
+
     if lead is None:
         all_leads = db.execute(select(Lead)).scalars().all()
         for l in all_leads:

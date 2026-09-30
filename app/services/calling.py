@@ -68,7 +68,9 @@ def initiate_call(
             )
             call_sid = twilio_call.sid
         except Exception as exc:  # pragma: no cover — network/Twilio errors
-            call_sid = f"err:{exc!s}"[:64]
+            # Don't pretend the call connected: surface the failure so the
+            # router returns an error and no "successful" call is committed.
+            raise RuntimeError(f"Twilio call failed: {exc}") from exc
     # Dev dry-run: no call_sid, call logged for the pipeline.
 
     # Attempt count = prior calls on this lead + 1
@@ -115,10 +117,12 @@ def log_call_outcome(
     lead = call.lead
 
     if outcome == CallOutcome.DNC_REQUEST:
-        # Honor opt-out instantly
-        if call.phone:
+        # Honor opt-out instantly.  Call has a phone_id FK but no relationship —
+        # look the phone up directly.
+        phone = db.get(Phone, call.phone_id) if call.phone_id else None
+        if phone:
             from app.services.skiptrace import mark_opted_out
-            mark_opted_out(db, call.phone)
+            mark_opted_out(db, phone)
 
     if outcome == CallOutcome.VERBAL_YES:
         lead.status = LeadStatus.WARM

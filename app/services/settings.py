@@ -222,7 +222,8 @@ def set_setting(db: Session, key: str, value: str) -> Setting:
             is_secret=_is_secret_key(key),
             category=SETTING_DEFS.get(key, {}).get("category", "general"),
             label=SETTING_DEFS.get(key, {}).get("label", key),
-            description=SETTING_DEFS.get(key, {}).get("description"),
+            # NOTE: Setting model has no `description` column — omitted.
+
         )
     else:
         row.value = value
@@ -257,12 +258,16 @@ def get_all_settings(db: Session) -> list[dict]:
 
 
 def _mask_value(value: Optional[str]) -> str:
-    """Mask a secret value for display, showing only the last 4 chars."""
+    """Mask a secret for API output.
+
+    Returns a fixed all-bullets sentinel for any non-empty value.  This keeps the
+    router's keep-current guard (``set(value) == {"\u2022"}``) working: a client
+    that echoes the masked value back on PUT is treated as "keep current" instead
+    of having the mask written over the real secret.  Empty/unset returns ''.
+    """
     if not value:
         return ""
-    if len(value) <= 4:
-        return "••••"
-    return "•" * (len(value) - 4) + value[-4:]
+    return "••••"
 
 
 def get_twilio_config(db: Session) -> dict:

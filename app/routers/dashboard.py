@@ -28,9 +28,12 @@ def dashboard(db: Session = Depends(get_db)):
     calls_today = db.execute(
         select(func.count(Call.id)).where(Call.created_at >= today_start)
     ).scalar() or 0
+    tomorrow_start = datetime.combine(today + timedelta(days=1), datetime.min.time())
     followups_today = db.execute(
         select(func.count(FollowUp.id)).where(
-            FollowUp.due_at >= today_start, FollowUp.done == False
+            FollowUp.due_at >= today_start,
+            FollowUp.due_at < tomorrow_start,
+            FollowUp.done == False,
         )
     ).scalar() or 0
     stack_today = db.execute(

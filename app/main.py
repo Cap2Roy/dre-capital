@@ -18,7 +18,7 @@ from app.routers import (
 )
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/static"}
 
 
 @asynccontextmanager
