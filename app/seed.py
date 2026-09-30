@@ -272,6 +272,18 @@ def ensure_admin() -> None:
             )
             db.add(roy)
             db.commit()
+        # Tester service account (for automated/QA logins)
+        tester = db.query(User).filter(User.email == "tester@dre-capital.com").first()
+        if not tester:
+            tester = User(
+                email="tester@dre-capital.com",
+                name="Service Tester",
+                role="admin",
+                password_hash=hash_password(os.getenv("TESTER_PASSWORD", "capital2026")),
+            )
+            db.add(tester)
+            db.commit()
+            print("Created service account: tester@dre-capital.com")
             print("Created admin: roy@betterai360.com")
 
         # Seed demo data if DB is empty
