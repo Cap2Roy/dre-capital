@@ -6,6 +6,7 @@ scraped content into structured property + owner records.
 
 Source types:
   - rentcast:    RentCast API (JSON, real property data, 150M+ records)
+  - arcgis:     Free public-domain county assessor parcel data via Esri ArcGIS REST (no API key)
   - county_tax:  County property appraiser / tax collector sites (HTML scraping)
   - public_api:  REST APIs that return JSON property data
   - html:        Generic HTML page with property listings
@@ -82,6 +83,25 @@ SOURCE_DIRECTORY: list[dict[str, str]] = [
         "search_hint": '{"limit":50}',
         "state": "",
         "county": "",
+    },
+
+    {
+        "name": "Harris County TX Parcels (free — ArcGIS)",
+        "source_type": "arcgis",
+        "url": "https://services6.arcgis.com/2yF1BNcZtu43QAOt/ArcGIS/rest/services/HarrisCountyParcels/FeatureServer/0",
+        "description": "FREE public-domain Harris County (TX) parcel data — 100% no API key. Owner name, mailing address, site address, land/assessed/market value. Filter absentees: edit search params where=mail_state<>'TX'.",
+        "search_hint": '{"where":"mail_state<>\\u0027TX\\u0027","limit":50}',
+        "state": "TX",
+        "county": "Harris",
+    },
+    {
+        "name": "Dallas County TX Parcels (free — ArcGIS)",
+        "source_type": "arcgis",
+        "url": "https://services6.arcgis.com/2yF1BNcZtu43QAOt/ArcGIS/rest/services/Dallas_County_Parcel/FeatureServer/0",
+        "description": "FREE public-domain Dallas County (TX) parcel data — 100% no API key. Owner name, situs + mailing address, land/market value, year built. Filter absentees: edit search params where=MAIL_STAT<>'TX'.",
+        "search_hint": '{"where":"MAIL_STAT<>\\u0027TX\\u0027","limit":50}',
+        "state": "TX",
+        "county": "Dallas",
     },
 ]
 
@@ -270,6 +290,9 @@ def llm_parse_raw_data(raw_text: str) -> list[dict[str, Any]]:
             return data
         if isinstance(data, dict) and "results" in data:
             return data["results"]
+        # ArcGIS feature service JSON: {"features": [{"attributes": {...}}]}
+        if isinstance(data, dict) and isinstance(data.get("features"), list):
+            return [f.get("attributes", {}) for f in data["features"] if isinstance(f, dict)]
     except (json.JSONDecodeError, TypeError):
         pass
 
@@ -444,6 +467,138 @@ def scrape_rentcast(url: str, search_params: dict[str, Any], api_key: str | None
         resp.raise_for_status()
         return resp.text
 
+def scrape_arcgis(url: str, search_params: dict[str, Any], api_key: str | None = None) -> str:
+    """Scrape a public-domain Esri ArcGIS REST FeatureServer.
+
+    Many county/local governments publish assessor parcel data as free,
+    public-domain ArcGIS feature services (no API key, no auth). These return
+    JSON with owner names, site/mailing addresses, and assessed/market values.
+
+    The FeatureServer URL should point at a layer query endpoint, e.g.:
+      https://<host>/arcgis/rest/services/<Layer>/FeatureServer/0
+
+    Search params recognized (mirror ArcGIS query() parameters):
+      where     — SQL where clause (e.g. "mail_state<>'TX'" for absentee owners)
+      outFields — comma-separated fields to return (default "*")
+      limit     — max records to return (maps to resultRecordCount)
+      city, zip, county, state — convenience filters folded into the where clause
+
+    Uses POST (avoids URL-length limits on the where clause).
+    """
+    params: dict[str, Any] = {"f": "json", "returnGeometry": "false"}
+    base_url = url.rstrip("/")
+    query_url = base_url if base_url.endswith("/query") else f"{base_url}/query"
+
+    clauses: list[str] = []
+    where = (search_params.get("where") or "").strip()
+    if where:
+        clauses.append(where)
+    for field in ("city", "zip", "county", "state"):
+        v = (search_params.get(field) or "").strip()
+        if v:
+            clauses.append(f"UPPER({field.upper()}) LIKE '%{v.upper()}%'")
+    if clauses:
+        params["where"] = " AND ".join(f"({c})" for c in clauses)
+
+    params["outFields"] = (search_params.get("outFields") or "").strip() or "*"
+
+    limit = search_params.get("limit")
+    if limit is not None:
+        params["resultRecordCount"] = int(limit)
+
+    headers = {**HEADERS, "Accept": "application/json"}
+    with httpx.Client(timeout=30, follow_redirects=True, headers=headers) as client:
+        resp = client.post(query_url, data=params)
+        resp.raise_for_status()
+        return resp.text
+
+
+# ArcGIS parcel layers use varying field naming conventions across counties.
+# `_normalize_arcgis` maps by fuzzy matching on the attribute key so the same
+# normalizer works for Harris, Dallas, and other TxGIO/REST parcel layers.
+_ARCGIS_OWNER_KEYS = ("ownername", "currowner", "cadowner", "owner")
+_ARCGIS_SITE_KEYS = ("situs_addr", "site_addr_1", "propertyaddress", "prop_addr", "situs")
+_ARCGIS_SITE_CITY_KEYS = ("situs_city", "site_addr_2", "prop_city", "site_city")
+_ARCGIS_SITE_ZIP_KEYS = ("situs_zip", "site_addr_3", "prop_zip", "site_zip")
+_ARCGIS_MAIL_KEYS = ("mail_addr", "mailing_address", "mail_line1", "mail_street")
+_ARCGIS_MAIL_CITY_KEYS = ("mail_city", "mailing_city")
+_ARCGIS_MAIL_STATE_KEYS = ("mail_state", "mail_stat", "mailing_state")
+_ARCGIS_MAIL_ZIP_KEYS = ("mail_zip", "mailing_zip")
+_ARCGIS_LAND_KEYS = ("land_val", "land_value")
+_ARCGIS_ASSESSED_KEYS = ("assessed_val", "assessed_value", "assess_val")
+_ARCGIS_MARKET_KEYS = ("tot_mkt_val", "mkt_value", "marketvalue", "tot_market_val")
+_ARCGIS_AREA_KEYS = ("acreage", "acres", "land_area_ac")
+
+
+def _arcgis_lookup(attrs: dict[str, Any], candidates: tuple[str, ...]) -> Any:
+    """Return the first non-empty attribute whose key matches a candidate keyword."""
+    lowered = {str(k).lower().strip(): v for k, v in attrs.items()}
+    for cand in candidates:
+        for key, val in lowered.items():
+            if cand in key and val not in (None, "", " ", "  "):
+                return val
+    return None
+
+
+def _normalize_arcgis(attrs: dict[str, Any]) -> dict[str, Any]:
+    """Map an ArcGIS feature attribute dict into the internal lead schema."""
+    owner = _arcgis_lookup(attrs, _ARCGIS_OWNER_KEYS)
+    site = _arcgis_lookup(attrs, _ARCGIS_SITE_KEYS)
+    site_city = _arcgis_lookup(attrs, _ARCGIS_SITE_CITY_KEYS)
+    site_zip = _arcgis_lookup(attrs, _ARCGIS_SITE_ZIP_KEYS)
+    mail = _arcgis_lookup(attrs, _ARCGIS_MAIL_KEYS)
+    mail_city = _arcgis_lookup(attrs, _ARCGIS_MAIL_CITY_KEYS)
+    mail_state = _arcgis_lookup(attrs, _ARCGIS_MAIL_STATE_KEYS)
+    mail_zip = _arcgis_lookup(attrs, _ARCGIS_MAIL_ZIP_KEYS)
+    land_val = _arcgis_lookup(attrs, _ARCGIS_LAND_KEYS)
+    assessed = _arcgis_lookup(attrs, _ARCGIS_ASSESSED_KEYS)
+    market = _arcgis_lookup(attrs, _ARCGIS_MARKET_KEYS)
+    area = _arcgis_lookup(attrs, _ARCGIS_AREA_KEYS)
+
+    def _addr(parts) -> str:
+        out: list[str] = []
+        joined = ""
+        for p in parts:
+            if p in (None, "", " "):
+                continue
+            s = str(p).strip()
+            # Skip a part already embedded in a combined address field.
+            if s and (s.lower() in joined.lower() or any(
+                    s.lower() in str(x).lower() for x in parts[:len(out)])):
+                continue
+            out.append(s)
+
+            joined += s
+        return ", ".join(out)
+
+    def _num(v):
+        if v in (None, "", " "):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    property_address = _addr([site, site_city, site_zip])
+    mailing_address = _addr([mail, mail_city, mail_state, mail_zip])
+
+    return {
+        "owner_name": str(owner).strip() if owner is not None else "",
+        "property_address": property_address,
+        "property_city": str(site_city).strip() if site_city else "",
+        "property_zip": str(site_zip).strip() if site_zip else "",
+        "mailing_address": mailing_address,
+        "mailing_city": str(mail_city).strip() if mail_city else "",
+        "mailing_state": str(mail_state).strip() if mail_state else "",
+        "mailing_zip": str(mail_zip).strip() if mail_zip else "",
+        "land_value": _num(land_val),
+        "assessed_value": _num(assessed) if assessed is not None else _num(market),
+        "market_value": _num(market),
+        "acreage": _num(area),
+        "source_type": "arcgis",
+        "source_url": "",
+    }
+
 
 def scrape_county_tax(url: str, search_params: dict[str, Any], api_key: str | None = None) -> str:
     """Scrape a county tax/property appraiser site.
@@ -497,6 +652,7 @@ def scrape_html(url: str, search_params: dict[str, Any], api_key: str | None = N
 
 SOURCE_ADAPTERS = {
     "rentcast": scrape_rentcast,
+    "arcgis": scrape_arcgis,
     "county_tax": scrape_county_tax,
     "public_api": scrape_public_api,
     "html": scrape_html,
@@ -539,6 +695,10 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
         # Normalize RentCast records to our schema
         if source.source_type == "rentcast":
             records = [_normalize_rentcast(r) for r in records if isinstance(r, dict)]
+
+        # Normalize ArcGIS feature-service records to our schema
+        if source.source_type == "arcgis":
+            records = [_normalize_arcgis(r) for r in records if isinstance(r, dict)]
 
         # Store raw results
         job.raw_results = json.dumps(records[:200])  # cap at 200 to avoid huge DB rows

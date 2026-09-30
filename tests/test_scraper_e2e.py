@@ -229,6 +229,61 @@ def test_llm_analysis():
     print(f"  ✅ Heuristic analysis detected LLC signal: '{analysis2}'")
 
 
+# ── Test 6: ArcGIS normalizer (free public-domain parcel data) ────────────────
+
+def test_arcgis_normalizer():
+    """Verify _normalize_arcgis maps varied county field conventions to our schema."""
+    from app.services.scraper import _normalize_arcgis
+
+    # Harris County style field names (CurrOwner, site_addr_1, mail_addr_1, ...)
+    harris = {
+        "CurrOwner": "BALBOA GROUP PARTNERS LLP",
+        "site_addr_1": "1501 COMMERCE ST",
+        "site_addr_2": "HOUSTON",
+        "site_addr_3": "77002",
+        "mail_addr_1": "1400 DOUGLAS ST STOP 1640",
+        "mail_city": "OMAHA",
+        "mail_state": "NE",
+        "mail_zip": "68179-1001",
+        "land_val": 74100,
+        "assessed_val": 74100,
+        "tot_mkt_val": 74100,
+    }
+    n = _normalize_arcgis(harris)
+    assert n["owner_name"] == "BALBOA GROUP PARTNERS LLP", f"owner: {n['owner_name']}"
+    assert "1501 COMMERCE ST" in n["property_address"], n["property_address"]
+    assert "OMAHA" in n["mailing_address"], n["mailing_address"]
+    assert n["mailing_state"] == "NE"
+    assert n["assessed_value"] == 74100.0
+    assert n["market_value"] == 74100.0
+    assert n["source_type"] == "arcgis"
+    print(f"  ✅ Harris-style: {n['owner_name']} @ {n['property_address']}")
+
+    # Dallas County style (combined SITUS_ADDR/MAIL_ADDR, OWNER_NAME, LAND_VALUE)
+    dallas = {
+        "OWNER_NAME": "1346 NORTH MAIN LLP",
+        "SITUS_ADDR": "1346 N MAIN ST, DUNCANVILLE, TX 75116",
+        "SITUS_CITY": "DUNCANVILLE",
+        "SITUS_ZIP": "75116",
+        "MAIL_ADDR": "2641 FARMERS BRANCH LN, FARMERS BRANCH, TEXAS 75234",
+        "MAIL_CITY": "FARMERS BRANCH",
+        "MAIL_STAT": "TEXAS",
+        "MAIL_ZIP": "75234",
+        "LAND_VALUE": 300000,
+        "MKT_VALUE": 5279800,
+    }
+    m = _normalize_arcgis(dallas)
+    assert m["owner_name"] == "1346 NORTH MAIN LLP", f"owner: {m['owner_name']}"
+    assert "1346 N MAIN ST" in m["property_address"], m["property_address"]
+    # Combined address should not duplicate city/zip
+    assert m["property_address"].count("DUNCANVILLE") == 1, m["property_address"]
+    assert "FARMERS BRANCH" in m["mailing_address"], m["mailing_address"]
+    assert m["market_value"] == 5279800.0
+    print(f"  ✅ Dallas-style: {m['owner_name']} @ {m['property_address']} | mail: {m['mailing_address']}")
+
+    return True
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -255,6 +310,10 @@ def main():
 
     print("Test 5: LLM analysis (heuristic fallback)")
     test_llm_analysis()
+    print()
+
+    print("Test 6: ArcGIS normalizer (free public-domain parcel data)")
+    test_arcgis_normalizer()
     print()
 
     # Cleanup
