@@ -281,9 +281,72 @@ def test_arcgis_normalizer():
     assert m["market_value"] == 5279800.0
     print(f"  ✅ Dallas-style: {m['owner_name']} @ {m['property_address']} | mail: {m['mailing_address']}")
 
+    # Coconino AZ style (OWNERNAME, SITUS + SITUS_CITY/ZIP, combined OWNERADDRE, TOTAL_FCV)
+    coc = {
+        "OWNERNAME": "4338 N27TH LLC",
+        "SITUS": "2718 E",
+        "SITUS_CITY": "FLAGSTAFF",
+        "SITUS_ZIP": "86004",
+        "OWNERADDRE": "600 N 75TH AVE PHOENIX, AZ 85043",
+        "TOTAL_FCV": 515651,
+    }
+    c = _normalize_arcgis(coc)
+    assert c["owner_name"] == "4338 N27TH LLC", f"owner: {c['owner_name']}"
+    assert "600 N 75TH AVE PHOENIX" in c["mailing_address"], c["mailing_address"]
+    assert c["market_value"] == 515651.0, c["market_value"]
+    print(f"  ✅ Coconino-style: {c['owner_name']} | mail: {c['mailing_address']} | value: {c['market_value']}")
+
+    # Mohave AZ style (OWNER, SITE_ADDRE, MAILING_AD, ASSESSED_F)
+    moh = {
+        "OWNER": "GPS PROPERTIES LLC",
+        "SITE_ADDRE": "2723 TATUM",
+        "MAILING_AD": "1360 N HANCOCK ST",
+        "ASSESSED_F": 39885,
+    }
+    h = _normalize_arcgis(moh)
+    assert h["owner_name"] == "GPS PROPERTIES LLC", f"owner: {h['owner_name']}"
+    assert "1360 N HANCOCK ST" in h["mailing_address"], h["mailing_address"]
+    assert h["assessed_value"] == 39885.0, h["assessed_value"]
+    print(f"  ✅ Mohave-style: {h['owner_name']} @ {h['property_address']} | mail: {h['mailing_address']} | val: {h['assessed_value']}")
+
+    # Maricopa AZ style (Owner_Name, Mailing_Ad, Situs_Addr, comma-formatted Sale_Price)
+    mar = {
+        "Owner_Name": "ROOPE GARY E/CAMEROTTO-ROOPE CARLA",
+        "Situs_Addr": "11458 E ONZA AVE MESA 85212",
+        "Property_C": "MESA",
+        "Property_Z": "85212",
+        "Mailing_Ad": "11458 E ONZA AVE",
+        "Sale_Price": "356,961",
+    }
+    mc = _normalize_arcgis(mar)
+    assert "ROOPE GARY" in mc["owner_name"], mc["owner_name"]
+    assert "11458 E ONZA AVE" in mc["property_address"], mc["property_address"]
+    # comma-formatted value must parse to a float
+    assert mc["market_value"] == 356961.0, mc["market_value"]
+    print(f"  ✅ Maricopa-style: {mc['owner_name']} @ {mc['property_address']} | value: {mc['market_value']}")
+
     return True
 
 
+def test_arcgis_source_directory_and_where_default():
+    """Verify the free-source directory and the scrape_arcgis where=1=1 default."""
+    from app.services.scraper import get_source_directory, scrape_arcgis
+
+    d = get_source_directory()
+    arcgis = [s for s in d if s["source_type"] == "arcgis"]
+    # Harris + Dallas + Coconino + Mohave + Maricopa
+    assert len(arcgis) == 5, f"expected 5 free arcgis sources, got {len(arcgis)}"
+    az = {s["county"] for s in arcgis if s["state"] == "AZ"}
+    assert az >= {"Coconino", "Mohave", "Maricopa"}, f"AZ counties: {az}"
+    print(f"  ✅ Source directory has {len(d)} sources, {len(arcgis)} free ArcGIS")
+
+    maricopa = next(s for s in arcgis if s["county"] == "Maricopa")
+    # No where clause → defaults to 1=1 so the query actually returns rows
+    raw = scrape_arcgis(maricopa["url"], {"limit": 1})
+    assert '"features"' in raw and raw.count('"features"') > 0, "default where=1=1 must return rows"
+    print("  ✅ scrape_arcgis defaults where=1=1 (returns data without a filter)")
+
+    return True
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -299,7 +362,6 @@ def main():
     print("Test 2: Live HTTP fetch + parse")
     test_live_fetch_and_parse()
     print()
-
     print("Test 3: Scrape job end-to-end (DB)")
     db, source, job, results = test_scrape_job_e2e(records)
     print()
@@ -314,6 +376,10 @@ def main():
 
     print("Test 6: ArcGIS normalizer (free public-domain parcel data)")
     test_arcgis_normalizer()
+    print()
+
+    print("Test 7: Source directory + where=1=1 default")
+    test_arcgis_source_directory_and_where_default()
     print()
 
     # Cleanup

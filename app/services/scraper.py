@@ -103,6 +103,33 @@ SOURCE_DIRECTORY: list[dict[str, str]] = [
         "state": "TX",
         "county": "Dallas",
     },
+    {
+        "name": "Coconino County AZ Parcels (free — ArcGIS)",
+        "source_type": "arcgis",
+        "url": "https://services6.arcgis.com/2yF1BNcZtu43QAOt/ArcGIS/rest/services/coconino_county_arizona_parcels/FeatureServer/0",
+        "description": "FREE public-domain Coconino County (AZ) parcel data — no API key. Owner name, situs address + city/zip, owner/officer mailing address, full cash value. Filter absentees: edit search params where=OWNERADDRE NOT LIKE '%FLAGSTAFF%'.",
+        "search_hint": '{"where":"OWNERADDRE NOT LIKE \\u0027%FLAGSTAFF%\\u0027","limit":50}',
+        "state": "AZ",
+        "county": "Coconino",
+    },
+    {
+        "name": "Mohave County AZ Parcels (free — ArcGIS)",
+        "source_type": "arcgis",
+        "url": "https://services6.arcgis.com/2yF1BNcZtu43QAOt/ArcGIS/rest/services/mohavecountyarizonaparcels_ExportFeatures/FeatureServer/0",
+        "description": "FREE public-domain Mohave County (AZ) parcel data — no API key. Owner name, situs + mailing address, assessed/full-cash/land value, sale price. Filter absentees: edit search params where=STATE<>'AZ'.",
+        "search_hint": '{"where":"STATE<>\\u0027AZ\\u0027","limit":50}',
+        "state": "AZ",
+        "county": "Mohave",
+    },
+    {
+        "name": "Maricopa County AZ Parcels (free — ArcGIS)",
+        "source_type": "arcgis",
+        "url": "https://services6.arcgis.com/2yF1BNcZtu43QAOt/ArcGIS/rest/services/Maricopa_Parcels/FeatureServer/0",
+        "description": "FREE public-domain Maricopa County (AZ) parcel data — no API key (Phoenix metro). Owner name, situs + mailing address, recent sale price, living area, land size. Best coverage by property count.",
+        "search_hint": '{"limit":50}',
+        "state": "AZ",
+        "county": "Maricopa",
+    },
 ]
 
 
@@ -499,6 +526,8 @@ def scrape_arcgis(url: str, search_params: dict[str, Any], api_key: str | None =
             clauses.append(f"UPPER({field.upper()}) LIKE '%{v.upper()}%'")
     if clauses:
         params["where"] = " AND ".join(f"({c})" for c in clauses)
+    else:
+        params["where"] = "1=1"
 
     params["outFields"] = (search_params.get("outFields") or "").strip() or "*"
 
@@ -516,18 +545,18 @@ def scrape_arcgis(url: str, search_params: dict[str, Any], api_key: str | None =
 # ArcGIS parcel layers use varying field naming conventions across counties.
 # `_normalize_arcgis` maps by fuzzy matching on the attribute key so the same
 # normalizer works for Harris, Dallas, and other TxGIO/REST parcel layers.
-_ARCGIS_OWNER_KEYS = ("ownername", "currowner", "cadowner", "owner")
-_ARCGIS_SITE_KEYS = ("situs_addr", "site_addr_1", "propertyaddress", "prop_addr", "situs")
-_ARCGIS_SITE_CITY_KEYS = ("situs_city", "site_addr_2", "prop_city", "site_city")
-_ARCGIS_SITE_ZIP_KEYS = ("situs_zip", "site_addr_3", "prop_zip", "site_zip")
-_ARCGIS_MAIL_KEYS = ("mail_addr", "mailing_address", "mail_line1", "mail_street")
+_ARCGIS_OWNER_KEYS = ("ownername", "owner_name", "currowner", "cadowner", "owner")
+_ARCGIS_SITE_KEYS = ("situs", "site_addr", "site_addre", "propertyaddress", "prop_addr", "sit_addr")
+_ARCGIS_SITE_CITY_KEYS = ("situs_city", "site_addr_2", "prop_city", "site_city", "property_c")
+_ARCGIS_SITE_ZIP_KEYS = ("situs_zip", "site_addr_3", "prop_zip", "site_zip", "property_z")
+_ARCGIS_MAIL_KEYS = ("mail_addr", "mailing_addr", "mailing_ad", "mail_line1", "mail_street", "owneraddre", "addr_line1")
 _ARCGIS_MAIL_CITY_KEYS = ("mail_city", "mailing_city")
 _ARCGIS_MAIL_STATE_KEYS = ("mail_state", "mail_stat", "mailing_state")
 _ARCGIS_MAIL_ZIP_KEYS = ("mail_zip", "mailing_zip")
-_ARCGIS_LAND_KEYS = ("land_val", "land_value")
-_ARCGIS_ASSESSED_KEYS = ("assessed_val", "assessed_value", "assess_val")
-_ARCGIS_MARKET_KEYS = ("tot_mkt_val", "mkt_value", "marketvalue", "tot_market_val")
-_ARCGIS_AREA_KEYS = ("acreage", "acres", "land_area_ac")
+_ARCGIS_LAND_KEYS = ("land_val", "land_value", "landvalue")
+_ARCGIS_ASSESSED_KEYS = ("assessed_val", "assessed_value", "assess_val", "assessed_f", "assessment")
+_ARCGIS_MARKET_KEYS = ("tot_mkt_val", "mkt_value", "marketvalue", "tot_market_val", "total_fcv", "full_cash", "sale_price", "salep")
+_ARCGIS_AREA_KEYS = ("acreage", "acres", "land_area_ac", "land_sqft")
 
 
 def _arcgis_lookup(attrs: dict[str, Any], candidates: tuple[str, ...]) -> Any:
@@ -574,6 +603,8 @@ def _normalize_arcgis(attrs: dict[str, Any]) -> dict[str, Any]:
     def _num(v):
         if v in (None, "", " "):
             return None
+        if isinstance(v, str):
+            v = v.replace(",", "").replace("$", "").strip()
         try:
             return float(v)
         except (TypeError, ValueError):
