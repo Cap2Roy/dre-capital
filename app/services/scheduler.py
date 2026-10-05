@@ -95,6 +95,14 @@ async def scheduler_loop() -> None:
             await asyncio.sleep(_CHECK_INTERVAL_SECONDS)
             db = SessionLocal()
             try:
+                # Meeting reminders fire on every wake (independent of the
+                # auto-scrape toggle) so a near meeting isn't missed.
+                try:
+                    from app.services.meetings import process_due_reminders
+                    process_due_reminders(db)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Meeting reminder check failed: %s", exc)
+
                 if not _auto_scrape_enabled(db):
                     continue
                 now = datetime.now()

@@ -351,6 +351,10 @@ def seed_default_templates(db) -> None:
          "Signature (Assignor):  __________________________\n"
          "Signature (Assignee):   __________________________",
          ),
+        (MessageChannel.SMS, "meeting_reminder", "Meeting Reminder Text",
+         None,
+         "Hi {{owner_name}}, this is a reminder of our meeting tomorrow re: {{property_address}}. "
+         "Reply to confirm or reschedule. Thanks — DRE-Capital"),
     ]
     added = 0
     for channel, category, name, subject, body in defaults:

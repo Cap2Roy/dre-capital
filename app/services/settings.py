@@ -82,6 +82,14 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "AUTO_SCRAPE_HOUR",
         "description": "Local hour (0-23) to run the daily auto-scrape. Default 6 (6 AM).",
     },
+    # ── Area focus ───────────────────────────────────────────────────
+    "focus_state": {
+        "label": "Primary Focus State",
+        "category": "general",
+        "is_secret": False,
+        "env": "FOCUS_STATE",
+        "description": "Two-letter state the dialer/queue defaults to (e.g. MI). Leave blank for no default.",
+    },
     # ── Skip Tracing ──────────────────────────────────────────────
     "skiptrace_provider": {
         "label": "Skip Trace Provider",

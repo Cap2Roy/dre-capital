@@ -129,6 +129,10 @@ def next_in_queue(state: str | None = None, exclude: str | None = None, db: Sess
     """Return the next lead + callable phone to dial (drives keep-dialing).
 
     ``exclude`` is a comma-separated list of lead IDs already worked this session.
+    When ``state`` is omitted, defaults to the configured Primary Focus State.
     """
+    if state is None:
+        from app.services.settings import get_setting
+        state = (get_setting(db, "focus_state") or "").strip().upper() or None
     exclude_ids = {x for x in (exclude or "").split(",") if x} if exclude else None
     return get_next_lead_to_dial(db, exclude_lead_ids=exclude_ids, state=state)
