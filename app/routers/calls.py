@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Call, CallOutcome, Lead, Phone
-from app.schemas import CallInitiateRequest, CallLogRequest, CallOut
+from app.schemas import CallInitiateRequest, CallLogRequest, CallOut, NoAnswerSmsRequest
 from app.services.calling import initiate_call, log_call_outcome
+from app.services.messaging import send_sms
+from app.services.queue import get_next_lead_to_dial
 from app.services.skiptrace import is_callable
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
@@ -65,3 +68,67 @@ async def twilio_status(request: Request, db: Session = Depends(get_db)):
                 call.duration_seconds = int(duration)
             db.commit()
     return {"ok": True}
+
+
+@router.post("/{call_id}/no-answer")
+def no_answer_quick_click(
+    call_id: str,
+    payload: NoAnswerSmsRequest,
+    db: Session = Depends(get_db),
+):
+    """Quick-click: log NO_ANSWER, fire the no-answer SMS template, return next lead.
+
+    One click advances the operator through the dial queue: this call is
+    recorded as no-answer, the seller is texted (if a no_answer template and a
+    callable phone exist), and the next lead + phone to dial is returned so the
+    UI can immediately offer the next call.  Missing template / opted-out phone
+    is non-fatal — the call is still logged and the queue advances.
+    """
+    call = db.get(Call, call_id)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    call = log_call_outcome(db, call, CallOutcome.NO_ANSWER, notes=payload.notes)
+
+    # Fire the no-answer SMS template if one is configured and the phone is callable.
+    sms_sent = None
+    phone = db.get(Phone, call.phone_id) if call.phone_id else None
+    lead = call.lead
+    if phone and lead and is_callable(phone):
+        from app.models import MessageTemplate
+        template = None
+        if payload.template_id:
+            template = db.get(MessageTemplate, payload.template_id)
+        if template is None:
+            template = db.execute(
+                select(MessageTemplate).where(
+                    MessageTemplate.category == "no_answer",
+                    MessageTemplate.active == True,
+                ).order_by(MessageTemplate.created_at.desc()).limit(1)
+            ).scalars().first()
+        if template is not None:
+            try:
+                sms_sent = send_sms(db, lead, phone, template=template)
+            except (ValueError, RuntimeError):
+                # SMS failure must not block the dial queue from advancing.
+                sms_sent = None
+    db.commit()
+    if sms_sent is not None:
+        db.refresh(sms_sent)
+
+    # Next lead to dial (exclude the one we just worked).
+    nxt = get_next_lead_to_dial(db, exclude_lead_ids={lead.id} if lead else None)
+    return {
+        "call_id": call.id,
+        "sms": {"id": sms_sent.id, "status": sms_sent.status} if sms_sent else None,
+        "next_lead": nxt,
+    }
+
+
+@router.get("/queue/next")
+def next_in_queue(state: str | None = None, exclude: str | None = None, db: Session = Depends(get_db)):
+    """Return the next lead + callable phone to dial (drives keep-dialing).
+
+    ``exclude`` is a comma-separated list of lead IDs already worked this session.
+    """
+    exclude_ids = {x for x in (exclude or "").split(",") if x} if exclude else None
+    return get_next_lead_to_dial(db, exclude_lead_ids=exclude_ids, state=state)

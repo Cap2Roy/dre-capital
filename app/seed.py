@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from app.database import SessionLocal, init_db
 from app.models import (
     Buyer, Call, CallDirection, CallOutcome, Comp, Contract, FollowUp,
-    Lead, LeadStatus, ListType, Phone, PhoneQuality, SourceList, User,
+    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, SourceList, User,
 )
 from app.services.stacking import add_lead_to_list, recompute_stack_depths
 from app.services.skiptrace import skip_trace_lead
@@ -30,13 +30,16 @@ from app.services.buyers import match_buyers_for_lead
 STREETS = ["Maple", "Oak", "Cedar", "Pine", "Elm", "Birch", "Walnut", "Magnolia", "Pecan", "Willow",
            "Sunset", "Lakeview", "Highland", "Riverside", "Park", "Hillcrest", "Meadow", "Ash", "Cherry", "Sycamore"]
 CITIES = [("Houston", "TX"), ("Dallas", "TX"), ("San Antonio", "TX"), ("Austin", "TX"), ("Fort Worth", "TX")]
+MI_CITIES = [("Detroit", "MI"), ("Grand Rapids", "MI"), ("Warren", "MI"), ("Lansing", "MI"), ("Ann Arbor", "MI")]
 
 
-def _addr(i: int, city: str) -> tuple[str, str, str, str]:
+def _addr(i: int, city: str, state: str = "TX") -> tuple[str, str, str, str]:
     street = STREETS[i % len(STREETS)]
     num = 100 + i * 7
-    zipc = f"7700{i % 9:02d}"
-    return f"{num} {street} St", city, "TX", zipc
+    # 5-digit zip prefix by state (TX ~77001-79999, MI ~48001-49999).
+    prefix = "48" if state == "MI" else "77"
+    zipc = f"{prefix}{i % 100:03d}"
+    return f"{num} {street} St", city, state, zipc
 
 
 def run() -> None:
@@ -65,6 +68,9 @@ def run() -> None:
             ("Dallas Co Divorce Filings", ListType.DIVORCE, "Dallas", "TX"),
             ("Harris Co Absentee Owners", ListType.ABSENTEE_OWNER, "Harris", "TX"),
             ("Houston Code Violations", ListType.VACANT_CODE_VIOLATION, "Harris", "TX"),
+            ("Wayne Co Pre-Foreclosure", ListType.PRE_FORECLOSURE, "Wayne", "MI"),
+            ("Wayne Co Delinquent Tax Roll", ListType.TAX_DELINQUENT, "Wayne", "MI"),
+            ("Oakland Co Probate Filings", ListType.PROBATE, "Oakland", "MI"),
         ]
         source_lists = []
         for name, ltype, county, state in lists_spec:
@@ -106,6 +112,37 @@ def run() -> None:
             leads.append(lead)
         db.flush()
 
+        # Michigan leads — focus market (strong buyer network there).
+        for i in range(20):
+            city, state = MI_CITIES[i % len(MI_CITIES)]
+            addr, city, state, zipc = _addr(i + 100, city, state)
+            absentee = i % 3 == 0
+            llc = i % 4 == 0
+            lead = Lead(
+                property_address=addr,
+                property_city=city,
+                property_state=state,
+                property_zip=zipc,
+                owner_name=f"MI Owner {i+1}" + (" LLC" if llc else ""),
+                owner_is_llc=llc,
+                mailing_address=(f"{300+i} Outstate Rd, {city}, {state}" if absentee else addr),
+                mailing_city=city if absentee else None,
+                mailing_state=state if absentee else None,
+                mailing_zip=zipc if absentee else None,
+                absentee=absentee,
+                beds=random.choice([3, 3, 4, 4, 5]),
+                baths=random.choice([1.5, 2.0, 2.0, 2.5]),
+                sqft=random.randint(1100, 2600),
+                year_built=random.randint(1940, 2000),
+                assessed_value=random.randint(60000, 220000),
+                taxes_owed=random.choice([0, 0, 0, 1800, 4200, 9000]),
+                status=LeadStatus.NEW,
+                assigned_to=user.id,
+            )
+            db.add(lead)
+            leads.append(lead)
+        db.flush()
+
         # Assign list memberships to create stack depth
         # Houston/Harris leads get 1-4 of the Harris lists; Dallas leads get the divorce list
         for i, lead in enumerate(leads):
@@ -123,6 +160,12 @@ def run() -> None:
                 if i % 2 == 0:
                     sl2 = next(s for s in source_lists if s.list_type == ListType.ABSENTEE_OWNER)
                     add_lead_to_list(db, lead, sl2)
+            elif lead.property_state == "MI":
+                # Michigan leads: Wayne or Oakland lists (Detroit/Grand Rapids/Ann Arbor).
+                mi_lists = [sl for sl in source_lists if sl.county in ("Wayne", "Oakland")]
+                n = random.choice([1, 2, 2, 3])
+                for sl in random.sample(mi_lists, min(n, len(mi_lists))):
+                    add_lead_to_list(db, lead, sl)
         recompute_stack_depths(db)
         db.flush()
 
@@ -188,6 +231,12 @@ def run() -> None:
              "TX", "Dallas,Austin", 150000, 300000, 3, 4, "cosmetic_plus", 4),
             ("Robert Davis", "Davis Realty Partners", "+17135550005", "rob@davisrp.com",
              "TX", "Houston", 100000, 220000, 3, 5, "gut", 5),
+            ("Janet Kowalski", "Detroit Cash Group", "+13135550001", "janet@detroitcash.com",
+             "MI", "Detroit,Warren", 40000, 120000, 3, 5, "gut", 1),
+            ("Michael Novak", "Novak Holdings MI", "+13135550002", "mike@novakmi.com",
+             "MI", "Grand Rapids,Lansing", 50000, 150000, 3, 4, "cosmetic_plus", 2),
+            ("Aisha Rahman", "Ann Arbor Investors", "+13135550003", "aisha@aainvest.com",
+             "MI", "Ann Arbor", 90000, 220000, 3, 4, "light", 3),
         ]
         buyers = []
         for name, company, phone, email, states, cities_str, lo, hi, mn_b, mx_b, rehab, rank in buyers_spec:
@@ -222,6 +271,42 @@ def run() -> None:
         print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 1 contract.")
     finally:
         db.close()
+
+
+def seed_default_templates(db) -> None:
+    """Idempotently seed the out-of-the-box SMS/email message templates."""
+    existing = {t.name for t in db.query(MessageTemplate).all()}
+    defaults = [
+        (MessageChannel.SMS, "no_answer", "No Answer - Follow-up Text",
+         None,
+         "Hi {{owner_name}}, this is [your name] with DRE-Capital about your property at {{property_address}} in {{property_city}}, {{property_state}}. "
+         "Sorry I missed you — call or text me back anytime. Thanks!"),
+        (MessageChannel.SMS, "voicemail", "Voicemail Follow-up Text",
+         None,
+         "Hi {{owner_name}}, I just left a voicemail about {{property_address}}. "
+         "If you'd consider a cash offer, reply here or call me back. No pressure."),
+        (MessageChannel.SMS, "offer", "Offer Text",
+         None,
+         "Hi {{owner_name}} — we'd like to make a cash offer on {{property_address}}, {{property_city}}, {{property_state}}. "
+         "Can I send the offer over today?"),
+        (MessageChannel.EMAIL, "offer", "Offer Email",
+         "Cash offer for {{property_address}}",
+         "Hi {{owner_name}},\n\nWe'd like to make a cash offer on your property at {{property_address}}, {{property_city}}, {{property_state}} {{property_zip}}. "
+         "Please reply with a good time to send the offer over.\n\nThanks,\nDRE-Capital"),
+        (MessageChannel.EMAIL, "contract", "Contract Email",
+         "Your contract for {{property_address}}",
+         "Hi {{owner_name}},\n\nAttached is the contract for {{property_address}}. Please review and reach out with any questions.\n\nThanks,\nDRE-Capital"),
+    ]
+    added = 0
+    for channel, category, name, subject, body in defaults:
+        if name in existing:
+            continue
+        db.add(MessageTemplate(name=name, channel=channel, category=category,
+                                subject=subject, body=body, active=True))
+        added += 1
+    if added:
+        db.commit()
+        print(f"Seeded {added} default message templates.")
 
 def ensure_admin() -> None:
     """Production helper: create default users + demo data if DB is empty.
@@ -286,12 +371,16 @@ def ensure_admin() -> None:
             print("Created service account: tester@dre-capital.com")
             print("Created admin: roy@betterai360.com")
 
+        # Out-of-the-box message templates (independent of lead count).
+        seed_default_templates(db)
+
         # Seed demo data if DB is empty
         lead_count = db.query(Lead).count()
         if lead_count == 0:
             print("DB has no leads — seeding demo data...")
             db.close()
             run()
+            seed_default_templates(SessionLocal())
             return
     finally:
         db.close()

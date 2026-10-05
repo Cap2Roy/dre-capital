@@ -96,6 +96,16 @@ class CallDirection(str, enum.Enum):
     INBOUND = "inbound"
 
 
+
+class MessageChannel(str, enum.Enum):
+    SMS = "sms"
+    EMAIL = "email"
+
+
+class MessageDirection(str, enum.Enum):
+    OUTBOUND = "outbound"
+    INBOUND = "inbound"
+
 # ── Mixin ──────────────────────────────────────────────────────────────────
 
 class TimestampMixin:
@@ -177,6 +187,8 @@ class Lead(TimestampMixin, Base):
     calls: Mapped[list["Call"]] = relationship(back_populates="lead")
     followups: Mapped[list["FollowUp"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     contracts: Mapped[list["Contract"]] = relationship(back_populates="lead")
+    messages: Mapped[list["MessageLog"]] = relationship(back_populates="lead")
+    meetings: Mapped[list["Meeting"]] = relationship(back_populates="lead")
 
 
 class LeadListMembership(TimestampMixin, Base):
@@ -403,3 +415,57 @@ class ScrapeResult(TimestampMixin, Base):
     imported: Mapped[bool] = mapped_column(Boolean, default=False)
     imported_lead_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     job: Mapped["ScrapeJob"] = relationship(back_populates="results")
+
+
+# ── Message templates & SMS/email history ────────────────────────────────────
+
+class MessageTemplate(TimestampMixin, Base):
+    """Reusable SMS/email body templates with Jinja2 placeholders.
+
+    Placeholders are filled against a lead context, e.g.
+    ``{{ lead.owner_name }}``, ``{{ lead.property_address }}``.
+    """
+    __tablename__ = "message_templates"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    channel: Mapped[MessageChannel] = mapped_column(Enum(MessageChannel), default=MessageChannel.SMS, index=True)
+    category: Mapped[str] = mapped_column(String(64), default="general")  # e.g. no_answer, follow_up, offer
+    # Email only (NULL for SMS)
+    subject: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class MessageLog(TimestampMixin, Base):
+    """Outbound/inbound SMS (and email) tied to a lead + phone."""
+    __tablename__ = "message_logs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    lead_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("leads.id"), index=True, nullable=True)
+    phone_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("phones.id"), index=True, nullable=True)
+    channel: Mapped[MessageChannel] = mapped_column(Enum(MessageChannel), default=MessageChannel.SMS)
+    direction: Mapped[MessageDirection] = mapped_column(Enum(MessageDirection), default=MessageDirection.OUTBOUND)
+    to_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    from_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    # Delivery: sent / delivered / failed / received
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    twilio_sid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    template_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("message_templates.id"), nullable=True)
+    sent_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
+    lead: Mapped[Optional["Lead"]] = relationship(back_populates="messages")
+
+
+class Meeting(TimestampMixin, Base):
+    """A scheduled meeting/appointment with a lead (for notifications)."""
+    __tablename__ = "meetings"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    lead_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("leads.id"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(256))
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    location: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Reminder minutes before scheduled_at
+    reminder_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    lead: Mapped[Optional["Lead"]] = relationship(back_populates="meetings")

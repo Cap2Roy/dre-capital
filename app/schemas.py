@@ -301,3 +301,85 @@ class ScrapeImportRequest(BaseModel):
     result_ids: list[str]
     list_type: str = "probate"
     list_name: Optional[str] = None
+
+
+# ── Messaging (SMS / email) ─────────────────────────────────────────────────
+
+class MessageTemplateOut(ORMBase):
+    id: str
+    name: str
+    channel: str
+    category: str
+    subject: Optional[str] = None
+    body: str
+    active: bool
+    created_at: datetime
+
+
+class MessageTemplateCreate(BaseModel):
+    name: str
+    channel: str = "sms"  # sms | email
+    category: str = "general"
+    subject: Optional[str] = None
+    body: str
+    active: bool = True
+
+
+class MessageTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    channel: Optional[str] = None
+    category: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class MessageLogOut(ORMBase):
+    id: str
+    lead_id: Optional[str] = None
+    phone_id: Optional[str] = None
+    channel: str
+    direction: str
+    to_number: Optional[str] = None
+    from_number: Optional[str] = None
+    subject: Optional[str] = None
+    body: str
+    status: Optional[str] = None
+    template_id: Optional[str] = None
+    sent_by: Optional[str] = None
+    created_at: datetime
+
+
+class SendSmsRequest(BaseModel):
+    phone_id: str
+    body: Optional[str] = None  # if omitted, template_id is used
+    template_id: Optional[str] = None
+
+
+class NoAnswerSmsRequest(BaseModel):
+    """Quick-click: log NO_ANSWER, fire the no-answer template SMS, return next lead."""
+    template_id: Optional[str] = None  # defaults to the active no_answer template
+    notes: Optional[str] = None
+
+
+# ── Meetings ───────────────────────────────────────────────────────────────
+
+class MeetingOut(ORMBase):
+    id: str
+    lead_id: Optional[str] = None
+    title: str
+    scheduled_at: datetime
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    reminder_minutes: int
+    reminder_sent: bool
+    created_at: datetime
+
+
+class MeetingCreate(BaseModel):
+    lead_id: Optional[str] = None
+    title: str
+    scheduled_at: datetime
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    reminder_minutes: int = 60

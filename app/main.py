@@ -14,11 +14,11 @@ from fastapi.templating import Jinja2Templates
 
 from app.database import init_db
 from app.routers import (
-    auth, buyers, calls, contracts, dashboard, importer, leads, scraper, settings, users, valuation,
+    auth, buyers, calls, contracts, dashboard, importer, leads, messages, scraper, settings, users, valuation,
 )
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/messages/inbound", "/static"}
 
 
 @asynccontextmanager
@@ -39,7 +39,7 @@ app.mount("/static", StaticFiles(directory=str(_base / "static")), name="static"
 templates = Jinja2Templates(directory=str(_base / "templates"))
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, buyers, contracts, scraper):
+for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, buyers, contracts, scraper, messages):
     app.include_router(r.router)
 
 

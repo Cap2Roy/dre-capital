@@ -53,6 +53,13 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "TWILIO_FROM_NUMBER",
         "description": "Your Twilio phone number (E.164 format, e.g. +12125551234).",
     },
+    "twilio_sms_number": {
+        "label": "Twilio SMS Number",
+        "category": "calling",
+        "is_secret": False,
+        "env": "TWILIO_SMS_NUMBER",
+        "description": "Optional dedicated SMS number (E.164). If unset, the From Number above is used.",
+    },
     "operator_number": {
         "label": "Default Operator Number",
         "category": "calling",
