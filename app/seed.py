@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from app.database import SessionLocal, init_db
 from app.models import (
     Buyer, Call, CallDirection, CallOutcome, Comp, Contract, FollowUp,
-    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, SourceList, User,
+    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, SourceList, TitleCompany, User,
 )
 from app.services.stacking import add_lead_to_list, recompute_stack_depths
 from app.services.skiptrace import skip_trace_lead
@@ -238,12 +238,35 @@ def run() -> None:
             ("Aisha Rahman", "Ann Arbor Investors", "+13135550003", "aisha@aainvest.com",
              "MI", "Ann Arbor", 90000, 220000, 3, 4, "light", 3),
         ]
+        # Title-company partners (a primary buyer-sourcing channel).
+        title_partners = [
+            TitleCompany(name="First American Title - Houston", contact_name="Dana Ruiz",
+                         phone="+17135551100", email="dana@fat-houston.com",
+                         coverage_states="TX", referral_fee=500),
+            TitleCompany(name="Michigan Title Group", contact_name="Carl Brooks",
+                         phone="+13135551100", email="carl@mititlegroup.com",
+                         coverage_states="MI", referral_fee=750),
+            TitleCompany(name="Stewart Title - Wayne County", contact_name="Lena Park",
+                         phone="+13135551101", email="lena@stewartwayne.com",
+                         coverage_states="MI", referral_fee=500),
+        ]
+        for tc in title_partners:
+            db.add(tc)
+        db.flush()
+        mi_partner = title_partners[1].id  # Michigan Title Group
+
         buyers = []
         for name, company, phone, email, states, cities_str, lo, hi, mn_b, mx_b, rehab, rank in buyers_spec:
             b = Buyer(name=name, company=company, phone=phone, email=email,
                       target_states=states, target_cities=cities_str,
                       min_price=lo, max_price=hi, min_beds=mn_b, max_beds=mx_b,
                       rehab_level=rehab, ranking=rank)
+            # MI buyers come from the Michigan title-company partnership.
+            if states == "MI":
+                b.source = "title_partner"
+                b.title_company_id = mi_partner
+            else:
+                b.source = "network"
             db.add(b)
             buyers.append(b)
         db.flush()

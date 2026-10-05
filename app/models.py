@@ -313,7 +313,30 @@ class Buyer(TimestampMixin, Base):
     rehab_level: Mapped[Optional[str]] = mapped_column(String(40))  # light | cosmetic+ | gut
     ranking: Mapped[int] = mapped_column(Integer, default=0)  # 1 = top buyer
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Sourcing: where this buyer came from (network | title_partner | meetup | marketplace | referral).
+    source: Mapped[Optional[str]] = mapped_column(String(40), default="network")
+    # Preferred / referring title company for this buyer's closings.
+    title_company_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("title_companies.id"), nullable=True)
     contracts: Mapped[list["Contract"]] = relationship(back_populates="buyer")
+    title_company: Mapped[Optional["TitleCompany"]] = relationship(back_populates="buyers")
+
+
+class TitleCompany(TimestampMixin, Base):
+    """A title-company partner — a primary source of cash-buyer referrals."""
+    __tablename__ = "title_companies"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(180), index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(120))
+    phone: Mapped[Optional[str]] = mapped_column(String(20))
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    address: Mapped[Optional[str]] = mapped_column(String(255))
+    # States this partner covers (for closing / escrow).
+    coverage_states: Mapped[Optional[str]] = mapped_column(String(255))  # "TX,MI"
+    # Referral / marketing fee paid per closing (if any).
+    referral_fee: Mapped[Optional[float]] = mapped_column(Float, default=0)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    buyers: Mapped[list["Buyer"]] = relationship(back_populates="title_company")
 
 
 # ── Contracts / assignments ────────────────────────────────────────────────

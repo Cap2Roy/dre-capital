@@ -199,6 +199,8 @@ class BuyerOut(ORMBase):
     rehab_level: Optional[str] = None
     ranking: int
     active: bool
+    source: Optional[str] = None
+    title_company_id: Optional[str] = None
 
 class BuyerCreate(BaseModel):
     name: str
@@ -213,6 +215,35 @@ class BuyerCreate(BaseModel):
     max_beds: Optional[int] = None
     rehab_level: Optional[str] = None
     ranking: int = 10
+    source: Optional[str] = None
+    title_company_id: Optional[str] = None
+
+
+# ── Title companies (buyer-sourcing partners) ───────────────────────────────
+
+class TitleCompanyOut(ORMBase):
+    id: str
+    name: str
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    coverage_states: Optional[str] = None
+    referral_fee: Optional[float] = None
+    notes: Optional[str] = None
+    active: bool
+
+
+class TitleCompanyCreate(BaseModel):
+    name: str
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    coverage_states: Optional[str] = None
+    referral_fee: Optional[float] = None
+    notes: Optional[str] = None
+    active: bool = True
 
 
 # ── Contracts ──────────────────────────────────────────────────────────────
