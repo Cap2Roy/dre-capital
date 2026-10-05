@@ -12,12 +12,15 @@ The platform encodes the manual's daily loop end-to-end:
 
 | Manual Task | Platform Feature |
 |---|---|
-| **Build the list** | Import county-record CSVs (appraisal, tax, probate, code violations). Flexible column mapping. |
+| **Build the list** | Import county-record CSVs (appraisal, tax, probate, code violations). Flexible column mapping. **Daily auto-scrape** scheduler for county-tax / public-records sources (toggle + hour in Settings). |
 | **Stack the lists** | Dedup by address, count list overlap per property → **stack depth**. 3+ = call today, 2 = this week, 1 = mail only. |
-| **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. |
+| **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. Pluggable comps provider seam (mock by default; real RentCast/MLS drops in). |
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
-| **Make the call** | Compliant **click-to-call** via Twilio (manual-dial only — no autodialer). Auto-logs + schedules follow-ups. |
-| **Lock & hand off** | Contract creation with TX assignment disclosure. Buy-box buyer matching — top 5 first. |
+| **Make the call** | Compliant **click-to-call** via Twilio (manual-dial only — no autodialer). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead (keep-dialing). |
+| **Text the owner** | SMS via Twilio — template CRUD, manual send, inbound webhook logging, **STOP-keyword auto opt-out** for DNC compliance. |
+| **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
+| **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
+| **Schedule & remind** | Meeting scheduling + **reminder notifications** (SMS, fired by the scheduler before each meeting). **Area-focus** setting defaults the dial queue to a primary state (MI). |
 
 ## Tech Stack
 

@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from app.database import SessionLocal, init_db
 from app.models import (
     Buyer, Call, CallDirection, CallOutcome, Comp, Contract, FollowUp,
-    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, SourceList, TitleCompany, User,
+    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, ScrapeSource, SourceList, TitleCompany, User,
 )
 from app.services.stacking import add_lead_to_list, recompute_stack_depths
 from app.services.skiptrace import skip_trace_lead
@@ -78,6 +78,20 @@ def run() -> None:
             db.add(sl)
             source_lists.append(sl)
         db.flush()
+
+        # Scraper sources (county tax / public-records feeds the daily auto-scrape runs).
+        scrape_sources_spec = [
+            ("Harris County Tax Assessor", "https://hcad.org/records-search", "county_tax", "TX", "Harris",
+             '{"zip":"77001","min_value":80000,"status":"delinquent"}'),
+            ("Detroit Wayne County Treasurer", "https://waynecountytreasurer.com/foreclosure", "county_tax", "MI", "Wayne",
+             '{"zip":"48201","min_value":40000,"status":"foreclosure"}'),
+            ("Oakland County Register of Deeds", "https://www.oakgov.com/government/register-deeds", "public_api", "MI", "Oakland",
+             '{"zip":"48301","min_value":90000,"status":"probate"}'),
+        ]
+        for name, url, stype, state, county, params in scrape_sources_spec:
+            db.add(ScrapeSource(name=name, url=url, source_type=stype, state=state,
+                                county=county, search_params=params, active=True,
+                                auto_scrape=True))
 
         # Leads — assign each to 1-4 lists to produce stack depth variety
         random.seed(42)
