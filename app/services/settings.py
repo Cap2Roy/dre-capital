@@ -67,6 +67,21 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "",
         "description": "Default phone number for the acquisitions operator (E.164). Used if not prompted per-call.",
     },
+    # ── Auto-scrape ────────────────────────────────────────────────
+    "auto_scrape_enabled": {
+        "label": "Daily Auto-Scrape Enabled",
+        "category": "scraper",
+        "is_secret": False,
+        "env": "AUTO_SCRAPE_ENABLED",
+        "description": "If '1'/'true', the in-process scheduler scrapes every active source flagged auto_scrape once a day.",
+    },
+    "auto_scrape_hour": {
+        "label": "Auto-Scrape Hour (0-23)",
+        "category": "scraper",
+        "is_secret": False,
+        "env": "AUTO_SCRAPE_HOUR",
+        "description": "Local hour (0-23) to run the daily auto-scrape. Default 6 (6 AM).",
+    },
     # ── Skip Tracing ──────────────────────────────────────────────
     "skiptrace_provider": {
         "label": "Skip Trace Provider",

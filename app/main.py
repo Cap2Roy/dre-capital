@@ -4,6 +4,7 @@ Serves the JSON API under /api/ and the web UI (Jinja2 + static) at /.
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from app.database import init_db
 from app.routers import (
     auth, buyers, calls, contracts, dashboard, importer, leads, messages, scraper, settings, users, valuation,
 )
+from app.services.scheduler import scheduler_loop
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/messages/inbound", "/static"}
@@ -24,7 +26,13 @@ PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    scheduler_task = asyncio.create_task(scheduler_loop())
     yield
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(

@@ -254,6 +254,7 @@ class ScrapeSourceCreate(BaseModel):
     county: Optional[str] = None
     search_params: Optional[str] = None  # JSON string
     api_key: Optional[str] = None
+    auto_scrape: bool = False
 
 
 class ScrapeSourceOut(ORMBase):
@@ -265,6 +266,7 @@ class ScrapeSourceOut(ORMBase):
     county: Optional[str] = None
     search_params: Optional[str] = None
     active: bool
+    auto_scrape: bool = False
     created_at: datetime
 
 

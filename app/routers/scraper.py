@@ -41,6 +41,7 @@ def create_source(body: ScrapeSourceCreate, db: Session = Depends(get_db)):
         county=body.county,
         search_params=body.search_params,
         api_key=body.api_key,
+        auto_scrape=body.auto_scrape,
     )
     db.add(source)
     db.commit()
@@ -67,6 +68,7 @@ def update_source(
         source.search_params = body.search_params
     if body.api_key is not None:
         source.api_key = body.api_key
+    source.auto_scrape = body.auto_scrape
     db.commit()
     db.refresh(source)
     return source
@@ -176,3 +178,34 @@ def llm_status():
     """Check if the LLM is configured for scraping/parsing."""
     from app.services.scraper import llm_is_configured
     return {"configured": llm_is_configured()}
+
+
+# ── Auto-scrape (daily scheduler) ─────────────────────────────────────────────
+
+@router.post("/auto/run")
+def run_auto_scrape_now(db: Session = Depends(get_db)):
+    """Manually trigger the daily auto-scrape for all active auto_scrape sources.
+
+    Runs synchronously (same as a single on-demand job per source).  Returns a
+    summary of how many sources ran / succeeded / failed.
+    """
+    from app.services.scheduler import run_daily_auto_scrape
+    return run_daily_auto_scrape(db)
+
+
+@router.get("/auto/status")
+def auto_scrape_status(db: Session = Depends(get_db)):
+    """Report whether the daily auto-scrape is enabled and how many sources are opted in."""
+    from app.services.scheduler import _auto_scrape_enabled, _auto_scrape_hour
+    sources = db.execute(
+        select(ScrapeSource).where(
+            ScrapeSource.active == True,
+            ScrapeSource.auto_scrape == True,
+        )
+    ).scalars().all()
+    return {
+        "enabled": _auto_scrape_enabled(db),
+        "hour": _auto_scrape_hour(db),
+        "opted_in_sources": len(sources),
+        "sources": [{"id": s.id, "name": s.name} for s in sources],
+    }

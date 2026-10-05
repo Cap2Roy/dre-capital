@@ -367,6 +367,8 @@ class ScrapeSource(TimestampMixin, Base):
     # Auth/API key if needed
     api_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Whether this source should be scraped by the daily auto-scrape scheduler.
+    auto_scrape: Mapped[bool] = mapped_column(Boolean, default=False)
     jobs: Mapped[list["ScrapeJob"]] = relationship(back_populates="source", cascade="all, delete-orphan")
 
 
