@@ -169,6 +169,49 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "",
         "description": "Fallback follow-up days for unrecognized outcomes.",
     },
+    # ── Company / Email delivery ─────────────────────────────────
+    "company_name": {
+        "label": "Company Name",
+        "category": "general",
+        "is_secret": False,
+        "env": "COMPANY_NAME",
+        "description": "Legal entity name shown on contracts and emails (e.g. Direct Real Estate Capital LLC).",
+    },
+    "smtp_host": {
+        "label": "SMTP Host",
+        "category": "email",
+        "is_secret": False,
+        "env": "SMTP_HOST",
+        "description": "SMTP server for sending contract/email templates. Leave empty to disable email delivery.",
+    },
+    "smtp_port": {
+        "label": "SMTP Port",
+        "category": "email",
+        "is_secret": False,
+        "env": "SMTP_PORT",
+        "description": "SMTP port (default 587).",
+    },
+    "smtp_user": {
+        "label": "SMTP Username",
+        "category": "email",
+        "is_secret": True,
+        "env": "SMTP_USER",
+        "description": "SMTP username / API key for the configured provider.",
+    },
+    "smtp_password": {
+        "label": "SMTP Password",
+        "category": "email",
+        "is_secret": True,
+        "env": "SMTP_PASSWORD",
+        "description": "SMTP password / secret for the configured provider.",
+    },
+    "smtp_from": {
+        "label": "SMTP From Address",
+        "category": "email",
+        "is_secret": False,
+        "env": "SMTP_FROM",
+        "description": "Sender email address for outbound email (contracts, templates).",
+    },
     # ── LLM / Scraper ──────────────────────────────────────────────
     "llm_api_key": {
         "label": "LLM API Key",

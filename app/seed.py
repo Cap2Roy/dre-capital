@@ -296,6 +296,38 @@ def seed_default_templates(db) -> None:
         (MessageChannel.EMAIL, "contract", "Contract Email",
          "Your contract for {{property_address}}",
          "Hi {{owner_name}},\n\nAttached is the contract for {{property_address}}. Please review and reach out with any questions.\n\nThanks,\nDRE-Capital"),
+        (MessageChannel.EMAIL, "contract_seller", "Seller Purchase Agreement",
+         "Purchase Agreement — {{property_address}}",
+         "PURCHASE AND SALE AGREEMENT\n"
+         "{{today}}\n\n"
+         "SELLER: {{owner_name}}\n"
+         "BUYER: {{company_name}}\n\n"
+         "PROPERTY: {{property_address}}, {{property_city}}, {{property_state}} {{property_zip}}\n"
+         "{{beds}} bed / {{baths}} bath / {{sqft}} sq ft (approx.)\n\n"
+         "PURCHASE PRICE: ${{ '{:,.0f}'.format(contract_price) }}\n"
+         "EARNEST MONEY: To be deposited with the title company within 3 business days.\n\n"
+         "CLOSING: Within 30 days, or as mutually agreed.  This is an assignment — "
+         "{{company_name}} may assign its interest in this contract.  Closing subject to clear title.\n\n"
+         "SELLER DISCLOSURE: {{company_name}} is an investor purchasing for resale/assignment and "
+         "is not representing itself as the end owner of the property.\n\n"
+         "Signature (Seller): __________________________\n"
+         "Signature (Buyer):  __________________________",
+         ),
+        (MessageChannel.EMAIL, "contract_buyer", "Buyer Assignment Agreement",
+         "Assignment Agreement — {{property_address}}",
+         "ASSIGNMENT OF PURCHASE AND SALE AGREEMENT\n"
+         "{{today}}\n\n"
+         "ASSIGNOR (Seller side): {{company_name}}\n"
+         "ASSIGNEE (Cash Buyer): {{buyer_name}}{{ ' (' + buyer_company + ')' if buyer_company else '' }}\n\n"
+         "PROPERTY: {{property_address}}, {{property_city}}, {{property_state}} {{property_zip}}\n\n"
+         "ASSIGNMENT FEE: ${{ '{:,.0f}'.format(assignment_fee) }}\n"
+         "BUYER PURCHASE PRICE: ${{ '{:,.0f}'.format(buyer_price) if buyer_price else contract_price + assignment_fee }}\n\n"
+         "The Assignor assigns to the Assignee all right, title and interest in the Purchase and "
+         "Sale Agreement for the above property, in consideration of the assignment fee.  "
+         "Assignee agrees to close on or before the contract closing date.\n\n"
+         "Signature (Assignor):  __________________________\n"
+         "Signature (Assignee):   __________________________",
+         ),
     ]
     added = 0
     for channel, category, name, subject, body in defaults:

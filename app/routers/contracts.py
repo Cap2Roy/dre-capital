@@ -11,6 +11,13 @@ from app.database import get_db
 from app.models import Buyer, Contract, Lead, LeadStatus, Valuation
 from app.schemas import ContractCreate, ContractOut
 
+from app.services.contracts import (
+    contract_context,
+    find_contract_template,
+    render_contract_document,
+    send_contract_email,
+)
+
 router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 
 
@@ -66,3 +73,68 @@ def update_status(contract_id: str, status: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(contract)
     return contract
+
+
+@router.get("/{contract_id}/document")
+def get_contract_document(
+    contract_id: str,
+    party: str = "seller",
+    db: Session = Depends(get_db),
+):
+    """Render the contract document for a party ('seller' or 'buyer').
+
+    400 if no template is configured for that party.
+    """
+    contract = db.get(Contract, contract_id)
+    if not contract:
+        raise HTTPException(404, "Contract not found")
+    if party not in ("seller", "buyer"):
+        raise HTTPException(400, "party must be 'seller' or 'buyer'")
+    tpl = find_contract_template(db, party)
+    if tpl is None:
+        raise HTTPException(
+            400,
+            f"No active {party} contract template configured (create one in Message Templates).",
+        )
+    return {
+        "contract_id": contract.id,
+        "party": party,
+        "template_id": tpl.id,
+        "template_name": tpl.name,
+        "subject": tpl.subject,
+        "document": render_contract_document(db, contract, party),
+        "context": contract_context(db, contract, party),
+    }
+
+
+@router.post("/{contract_id}/send")
+def send_contract_document(
+    contract_id: str,
+    party: str = "seller",
+    db: Session = Depends(get_db),
+):
+    """Email the rendered contract document to the seller or buyer party.
+
+    502 if SMTP is not configured (email disabled), 400 if no template or no
+    known recipient address.
+    """
+    contract = db.get(Contract, contract_id)
+    if not contract:
+        raise HTTPException(404, "Contract not found")
+    if party not in ("seller", "buyer"):
+        raise HTTPException(400, "party must be 'seller' or 'buyer'")
+    try:
+        entry = send_contract_email(db, contract, party)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
+    db.commit()
+    db.refresh(entry)
+    return {
+        "contract_id": contract.id,
+        "party": party,
+        "log_id": entry.id,
+        "status": entry.status,
+        "to": entry.to_number,
+    }
