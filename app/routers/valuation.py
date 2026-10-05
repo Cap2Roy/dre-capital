@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -17,19 +18,32 @@ router = APIRouter(prefix="/api/leads/{lead_id}/valuation", tags=["valuation"])
 def create_valuation(lead_id: str, payload: ValuationRequest, db: Session = Depends(get_db)):
     """Compute ARV + repairs + MAO for a lead.
 
-    If no comps exist yet, the mock provider generates sold comps first.
-    In production, comps come from MLS / PropStream.
+    If no comps exist yet (or ``refresh_comps`` is set), the configured comps
+    provider generates sold comps.  The response surfaces the provider name
+    and whether it was a mock fallback so callers never mistake synthetic
+    comps for live data.
     """
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
 
-    existing_comps = db.query(Comp).filter_by(lead_id=lead_id).count()
-    if existing_comps == 0:
-        comps, _provider = get_comps_for_lead(db, lead, count=6)
+    provider = None
+    if payload.refresh_comps:
+        comps, provider = get_comps_for_lead(db, lead, count=6)
+        # Replace stored comps for this lead with the fresh set.
+        for c in db.execute(select(Comp).where(Comp.lead_id == lead_id)).scalars().all():
+            db.delete(c)
+        db.flush()
         for c in comps:
             db.add(c)
         db.flush()
+    else:
+        existing = db.execute(select(Comp).where(Comp.lead_id == lead_id)).scalars().all()
+        if not existing:
+            comps, provider = get_comps_for_lead(db, lead, count=6)
+            for c in comps:
+                db.add(c)
+            db.flush()
 
     val = run_valuation(
         db, lead,
@@ -39,4 +53,8 @@ def create_valuation(lead_id: str, payload: ValuationRequest, db: Session = Depe
     )
     db.commit()
     db.refresh(val)
-    return val
+    resp = ValuationOut.model_validate(val)
+    if provider:
+        resp.comps_provider = provider
+        resp.comps_is_mock = provider == "mock" or provider.startswith("mock:")
+    return resp

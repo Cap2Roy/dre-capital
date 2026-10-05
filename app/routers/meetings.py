@@ -38,10 +38,12 @@ def update_meeting(meeting_id: str, payload: MeetingCreate, db: Session = Depend
     meeting = db.get(Meeting, meeting_id)
     if not meeting:
         raise HTTPException(404, "Meeting not found")
+    old_when = meeting.scheduled_at
     for k, v in payload.model_dump().items():
         setattr(meeting, k, v)
-    # Moving a meeting reopens its reminder window.
-    meeting.reminder_sent = False
+    # Reopen the reminder window only when the meeting moved to a future time.
+    if meeting.scheduled_at != old_when and meeting.scheduled_at > datetime.now():
+        meeting.reminder_sent = False
     db.commit()
     db.refresh(meeting)
     return meeting

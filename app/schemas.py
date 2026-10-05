@@ -56,6 +56,8 @@ class ValuationOut(ORMBase):
     mao: float
     comp_count: int
     notes: Optional[str] = None
+    comps_provider: Optional[str] = None
+    comps_is_mock: bool = False
     created_at: datetime
 
 class CallOut(ORMBase):
@@ -90,11 +92,13 @@ class LeadOut(ORMBase):
     property_zip: Optional[str] = None
     owner_name: str
     owner_is_llc: bool
+    owner_email: Optional[str] = None
     mailing_address: Optional[str] = None
     absentee: bool
     beds: Optional[int] = None
     baths: Optional[float] = None
     sqft: Optional[int] = None
+    rehab_level: Optional[str] = None
     year_built: Optional[int] = None
     assessed_value: Optional[float] = None
     taxes_owed: Optional[float] = None
@@ -117,6 +121,7 @@ class LeadCreate(BaseModel):
     property_state: Optional[str] = None
     property_zip: Optional[str] = None
     owner_name: str = ""
+    owner_email: Optional[str] = None
     owner_is_llc: bool = False
     mailing_address: Optional[str] = None
     mailing_city: Optional[str] = None
@@ -126,6 +131,7 @@ class LeadCreate(BaseModel):
     baths: Optional[float] = None
     sqft: Optional[int] = None
     year_built: Optional[int] = None
+    rehab_level: Optional[str] = None
     assessed_value: Optional[float] = None
     taxes_owed: Optional[float] = None
 
@@ -167,6 +173,7 @@ class ValuationRequest(BaseModel):
     repipe: bool = False
     panel: bool = False
     notes: Optional[str] = None
+    refresh_comps: bool = False  # force a fresh comps fetch instead of reusing stored ones
 
 
 # ── Calls ──────────────────────────────────────────────────────────────────
@@ -250,6 +257,7 @@ class TitleCompanyCreate(BaseModel):
 
 class ContractCreate(BaseModel):
     buyer_id: Optional[str] = None
+    status: Optional[str] = None  # pending|signed|assigned|closed|fallen; defaults to pending
     contract_price: float
     assignment_fee: float = 15000
     buyer_price: Optional[float] = None
@@ -375,6 +383,7 @@ class MessageLogOut(ORMBase):
     direction: str
     to_number: Optional[str] = None
     from_number: Optional[str] = None
+    to_address: Optional[str] = None
     subject: Optional[str] = None
     body: str
     status: Optional[str] = None

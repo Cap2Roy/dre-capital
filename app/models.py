@@ -164,12 +164,14 @@ class Lead(TimestampMixin, Base):
     mailing_city: Mapped[Optional[str]] = mapped_column(String(120))
     mailing_state: Mapped[Optional[str]] = mapped_column(String(2))
     mailing_zip: Mapped[Optional[str]] = mapped_column(String(12))
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     absentee: Mapped[bool] = mapped_column(Boolean, default=False)
     # Property facts
     beds: Mapped[Optional[int]] = mapped_column(Integer)
     baths: Mapped[Optional[float]] = mapped_column(Float)
     sqft: Mapped[Optional[int]] = mapped_column(Integer)
     year_built: Mapped[Optional[int]] = mapped_column(Integer)
+    rehab_level: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # light | cosmetic+ | gut
     # Assessed / tax
     assessed_value: Mapped[Optional[float]] = mapped_column(Float)
     taxes_owed: Mapped[Optional[float]] = mapped_column(Float)
@@ -471,6 +473,7 @@ class MessageLog(TimestampMixin, Base):
     direction: Mapped[MessageDirection] = mapped_column(Enum(MessageDirection), default=MessageDirection.OUTBOUND)
     to_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     from_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    to_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # email recipient (SMS uses to_number)
     subject: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     body: Mapped[str] = mapped_column(Text)
     # Delivery: sent / delivered / failed / received

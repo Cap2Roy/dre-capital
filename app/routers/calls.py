@@ -62,10 +62,13 @@ async def twilio_status(request: Request, db: Session = Depends(get_db)):
     status = form.get("CallStatus")
     duration = form.get("CallDuration")
     if call_sid:
-        call = db.query(Call).filter_by(call_sid=call_sid).first()
+        call = db.execute(select(Call).where(Call.call_sid == call_sid)).scalars().first()
         if call:
             if duration:
-                call.duration_seconds = int(duration)
+                try:
+                    call.duration_seconds = int(duration)
+                except (TypeError, ValueError):
+                    pass  # malformed callback — keep prior value
             db.commit()
     return {"ok": True}
 

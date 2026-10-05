@@ -16,25 +16,39 @@ from app.models import Meeting, MessageTemplate
 from app.services.messaging import send_sms
 
 
+_LATE_GRACE_HOURS = 6  # a reminder may fire at most ~6h after the meeting start
+
+
+def _reminder_late_expiry(meeting: Meeting) -> datetime:
+    """When an unsent reminder becomes moot: 2× the window after start."""
+    return meeting.scheduled_at + timedelta(minutes=2 * meeting.reminder_minutes)
+
+
 def find_due_reminders(db: Session, now: Optional[datetime] = None) -> list[Meeting]:
     """Meetings whose reminder window has opened and haven't been sent yet.
 
-    A reminder is due when ``now >= scheduled_at - reminder_minutes`` and the
-    meeting hasn't passed by more than its window (so a missed run still fires
-    shortly after, but not long after the meeting started).
+    A reminder is due when ``now >= scheduled_at - reminder_minutes`` (window
+    opened), hasn't been sent, is not in the far future (>24h ahead), and is
+    not long past (within ``_LATE_GRACE_HOURS`` of start).  Meetings past their
+    late expiry are skipped so a stale meeting never triggers a late SMS.
     """
     now = now or datetime.now()
+    late_cutoff = now - timedelta(hours=_LATE_GRACE_HOURS)
     return db.execute(
         select(Meeting).where(
             Meeting.reminder_sent == False,
-            Meeting.scheduled_at <= now + timedelta(hours=24),  # only near-term
+            Meeting.scheduled_at <= now + timedelta(hours=24),  # not too far ahead
+            Meeting.scheduled_at >= late_cutoff,               # not too far past
         )
     ).scalars().all()
 
 
 def _reminder_is_due(meeting: Meeting, now: datetime) -> bool:
+    """Reminder window opened and the meeting hasn't run too long past."""
     window_open_at = meeting.scheduled_at - timedelta(minutes=meeting.reminder_minutes)
-    return now >= window_open_at
+    if now < window_open_at:
+        return False
+    return now <= _reminder_late_expiry(meeting)
 
 
 def _reminder_template(db: Session) -> Optional[MessageTemplate]:

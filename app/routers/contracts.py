@@ -46,13 +46,16 @@ def create_contract(payload: ContractCreate, lead_id: str = None, db: Session = 
         contract_price=payload.contract_price,
         assignment_fee=payload.assignment_fee,
         buyer_price=payload.buyer_price,
-        status="signed",
-        signed_at=datetime.now(),
+        status=payload.status or "pending",
+        signed_at=datetime.now() if payload.status == "signed" else None,
         disclosure_sent=payload.disclosure_sent,
         notes=payload.notes,
     )
     db.add(contract)
-    lead.status = LeadStatus.UNDER_CONTRACT
+    # Only advance the lead to UNDER_CONTRACT if it isn't already in a
+    # terminal state (CLOSED/ASSIGNED/UNDER_CONTRACT) — never regress.
+    if lead.status not in (LeadStatus.CLOSED, LeadStatus.ASSIGNED, LeadStatus.UNDER_CONTRACT):
+        lead.status = LeadStatus.UNDER_CONTRACT
     db.commit()
     db.refresh(contract)
     return contract
@@ -128,6 +131,9 @@ def send_contract_document(
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except RuntimeError as exc:
+        # The audit row was flushed inside the service; commit it so the
+        # failed-attempt is retained, then surface the failure to the operator.
+        db.commit()
         raise HTTPException(502, str(exc))
     db.commit()
     db.refresh(entry)
@@ -136,5 +142,5 @@ def send_contract_document(
         "party": party,
         "log_id": entry.id,
         "status": entry.status,
-        "to": entry.to_number,
+        "to": entry.to_address,
     }

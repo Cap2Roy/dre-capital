@@ -30,6 +30,7 @@ def match_buyers_for_lead(db: Session, lead: Lead, valuation: Valuation | None =
     state = (lead.property_state or "").upper()
     city = (lead.property_city or "").lower()
     beds = lead.beds or 0
+    rehab = (lead.rehab_level or "").lower()
 
     scored: list[tuple[int, Buyer]] = []
     for b in buyers:
@@ -43,6 +44,11 @@ def match_buyers_for_lead(db: Session, lead: Lead, valuation: Valuation | None =
                 score += 2
         if b.min_beds is not None and b.max_beds is not None and beds:
             if b.min_beds <= beds <= b.max_beds:
+                score += 1
+        if rehab and b.rehab_level:
+            if rehab == b.rehab_level.lower():
+                score += 2
+            elif rehab in b.rehab_level.lower() or b.rehab_level.lower() in rehab:
                 score += 1
         if score > 0:
             scored.append((score, b))

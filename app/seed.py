@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta
-
+from sqlalchemy import select
 from app.database import SessionLocal, init_db
+
 from app.models import (
     Buyer, Call, CallDirection, CallOutcome, Comp, Contract, FollowUp,
-    Lead, LeadStatus, ListType, MessageChannel, MessageTemplate, Phone, PhoneQuality, ScrapeSource, SourceList, TitleCompany, User,
+    Lead, LeadStatus, ListType, Meeting, MessageChannel, MessageDirection,
+    MessageLog, MessageTemplate, Phone, PhoneQuality, ScrapeJob, ScrapeJobStatus,
+    ScrapeSource, Setting, SourceList, TitleCompany, User,
 )
 from app.services.stacking import add_lead_to_list, recompute_stack_depths
 from app.services.skiptrace import skip_trace_lead
@@ -30,7 +33,8 @@ from app.services.buyers import match_buyers_for_lead
 STREETS = ["Maple", "Oak", "Cedar", "Pine", "Elm", "Birch", "Walnut", "Magnolia", "Pecan", "Willow",
            "Sunset", "Lakeview", "Highland", "Riverside", "Park", "Hillcrest", "Meadow", "Ash", "Cherry", "Sycamore"]
 CITIES = [("Houston", "TX"), ("Dallas", "TX"), ("San Antonio", "TX"), ("Austin", "TX"), ("Fort Worth", "TX")]
-MI_CITIES = [("Detroit", "MI"), ("Grand Rapids", "MI"), ("Warren", "MI"), ("Lansing", "MI"), ("Ann Arbor", "MI")]
+MI_CITIES = [("Detroit", "MI"), ("Grand Rapids", "MI"), ("Warren", "MI"), ("Lansing", "MI"), ("Ann Arbor", "MI"),
+             ("Sterling Heights", "MI"), ("Flint", "MI"), ("Livonia", "MI"), ("Troy", "MI"), ("Kalamazoo", "MI")]
 
 
 def _addr(i: int, city: str, state: str = "TX") -> tuple[str, str, str, str]:
@@ -71,11 +75,19 @@ def run() -> None:
             ("Wayne Co Pre-Foreclosure", ListType.PRE_FORECLOSURE, "Wayne", "MI"),
             ("Wayne Co Delinquent Tax Roll", ListType.TAX_DELINQUENT, "Wayne", "MI"),
             ("Oakland Co Probate Filings", ListType.PROBATE, "Oakland", "MI"),
+            ("Macomb Co Delinquent Tax Roll", ListType.TAX_DELINQUENT, "Macomb", "MI"),
+            ("Genesee Co Pre-Foreclosure", ListType.PRE_FORECLOSURE, "Genesee", "MI"),
+            ("Kent Co Absentee Owners", ListType.ABSENTEE_OWNER, "Kent", "MI"),
+            ("Washtenaw Co Probate Filings", ListType.PROBATE, "Washtenaw", "MI"),
+            ("Travis Co Divorce Filings", ListType.DIVORCE, "Travis", "TX"),
+            ("Bexar Co Code Violations", ListType.VACANT_CODE_VIOLATION, "Bexar", "TX"),
         ]
         source_lists = []
         for name, ltype, county, state in lists_spec:
-            sl = SourceList(name=name, list_type=ltype, county=county, state=state)
-            db.add(sl)
+            existing = db.execute(select(SourceList).where(SourceList.name == name)).scalars().first()
+            sl = existing or SourceList(name=name, list_type=ltype, county=county, state=state)
+            if existing is None:
+                db.add(sl)
             source_lists.append(sl)
         db.flush()
 
@@ -89,9 +101,11 @@ def run() -> None:
              '{"zip":"48301","min_value":90000,"status":"probate"}'),
         ]
         for name, url, stype, state, county, params in scrape_sources_spec:
-            db.add(ScrapeSource(name=name, url=url, source_type=stype, state=state,
-                                county=county, search_params=params, active=True,
-                                auto_scrape=True))
+            existing = db.execute(select(ScrapeSource).where(ScrapeSource.name == name)).scalars().first()
+            if existing is None:
+                db.add(ScrapeSource(name=name, url=url, source_type=stype, state=state,
+                                    county=county, search_params=params, active=True,
+                                    auto_scrape=True))
 
         # Leads — assign each to 1-4 lists to produce stack depth variety
         random.seed(42)
@@ -99,6 +113,10 @@ def run() -> None:
         for i in range(30):
             city, state = CITIES[i % len(CITIES)]
             addr, city, state, zipc = _addr(i, city)
+            existing = db.execute(select(Lead).where(Lead.property_address == addr)).scalars().first()
+            if existing:
+                leads.append(existing)
+                continue
             absentee = i % 3 == 0
             llc = i % 5 == 0
             lead = Lead(
@@ -119,6 +137,8 @@ def run() -> None:
                 year_built=random.randint(1960, 2005),
                 assessed_value=random.randint(140000, 380000),
                 taxes_owed=random.choice([0, 0, 0, 2400, 5800, 12000]),
+                owner_email=f"owner{i+1}@example.com" if i % 2 == 0 else None,
+                rehab_level=random.choice(["light", "cosmetic_plus", "gut"]),
                 status=LeadStatus.NEW,
                 assigned_to=user.id,
             )
@@ -127,9 +147,13 @@ def run() -> None:
         db.flush()
 
         # Michigan leads — focus market (strong buyer network there).
-        for i in range(20):
+        for i in range(35):
             city, state = MI_CITIES[i % len(MI_CITIES)]
             addr, city, state, zipc = _addr(i + 100, city, state)
+            existing = db.execute(select(Lead).where(Lead.property_address == addr)).scalars().first()
+            if existing:
+                leads.append(existing)
+                continue
             absentee = i % 3 == 0
             llc = i % 4 == 0
             lead = Lead(
@@ -150,6 +174,8 @@ def run() -> None:
                 year_built=random.randint(1940, 2000),
                 assessed_value=random.randint(60000, 220000),
                 taxes_owed=random.choice([0, 0, 0, 1800, 4200, 9000]),
+                owner_email=f"miowner{i+1}@example.com" if i % 3 == 0 else None,
+                rehab_level=random.choice(["light", "cosmetic_plus", "gut"]),
                 status=LeadStatus.NEW,
                 assigned_to=user.id,
             )
@@ -232,80 +258,200 @@ def run() -> None:
             )
             db.add(call)
         db.flush()
-
-        # Buyers with buy-boxes
+        # Buyers with buy-boxes. Tuple: (name, company, phone, email, states, cities,
+        # min_price, max_price, min_beds, max_beds, rehab, ranking, source)
         buyers_spec = [
             ("Marcus Chen", "Cherokee Holdings", "+17135550001", "marcus@cherokee.com",
-             "TX", "Houston,Dallas", 100000, 200000, 3, 4, "gut", 1),
+             "TX", "Houston,Dallas", 100000, 200000, 3, 4, "gut", 1, "network"),
             ("Sarah Patel", "Patel Property Group", "+17135550002", "sarah@patelpg.com",
-             "TX", "Houston", 120000, 250000, 3, 4, "cosmetic_plus", 2),
+             "TX", "Houston", 120000, 250000, 3, 4, "cosmetic_plus", 2, "network"),
             ("James Wright", "Wright Capital", "+17135550003", "james@wrightcap.com",
-             "TX", "Houston,San Antonio", 80000, 180000, 3, 5, "light", 3),
+             "TX", "Houston,San Antonio", 80000, 180000, 3, 5, "light", 3, "network"),
             ("Linda Nguyen", "Nguyen Investments", "+17135550004", "linda@nguyeninv.com",
-             "TX", "Dallas,Austin", 150000, 300000, 3, 4, "cosmetic_plus", 4),
+             "TX", "Dallas,Austin", 150000, 300000, 3, 4, "cosmetic_plus", 4, "network"),
             ("Robert Davis", "Davis Realty Partners", "+17135550005", "rob@davisrp.com",
-             "TX", "Houston", 100000, 220000, 3, 5, "gut", 5),
+             "TX", "Houston", 100000, 220000, 3, 5, "gut", 5, "network"),
             ("Janet Kowalski", "Detroit Cash Group", "+13135550001", "janet@detroitcash.com",
-             "MI", "Detroit,Warren", 40000, 120000, 3, 5, "gut", 1),
+             "MI", "Detroit,Warren", 40000, 120000, 3, 5, "gut", 1, "title_partner"),
             ("Michael Novak", "Novak Holdings MI", "+13135550002", "mike@novakmi.com",
-             "MI", "Grand Rapids,Lansing", 50000, 150000, 3, 4, "cosmetic_plus", 2),
+             "MI", "Grand Rapids,Lansing", 50000, 150000, 3, 4, "cosmetic_plus", 2, "title_partner"),
             ("Aisha Rahman", "Ann Arbor Investors", "+13135550003", "aisha@aainvest.com",
-             "MI", "Ann Arbor", 90000, 220000, 3, 4, "light", 3),
+             "MI", "Ann Arbor", 90000, 220000, 3, 4, "light", 3, "title_partner"),
+            # New buyers across more sourcing channels.
+            ("David Okafor", "Okafor REI Meetup", "+17135550006", "david@okaforrei.com",
+             "TX", "Houston,Austin", 90000, 200000, 3, 4, "cosmetic_plus", 6, "meetup"),
+            ("Priya Shah", "Shah Marketplace Buyers", "+17135550007", "priya@shahmb.com",
+             "TX", "Fort Worth,Dallas", 110000, 260000, 3, 5, "light", 7, "marketplace"),
+            ("Tom Brennan", "Brennan Referral Group", "+13135550004", "tom@brennanref.com",
+             "MI", "Detroit,Livonia", 45000, 130000, 3, 4, "gut", 4, "referral"),
+            ("Lisa Cho", "Cho Investments Meetup", "+13135550005", "lisa@choinv.com",
+             "MI", "Grand Rapids,Kalamazoo", 60000, 170000, 3, 4, "cosmetic_plus", 5, "meetup"),
+            ("Hassan Ali", "Ali Cash Buyers Marketplace", "+17135550008", "hassan@alicash.com",
+             "TX", "San Antonio,Houston", 70000, 190000, 3, 5, "gut", 8, "marketplace"),
+            ("Grace Müller", "Müller Referral Network", "+13135550006", "grace@mueller.net",
+             "MI", "Ann Arbor,Troy", 95000, 240000, 3, 4, "light", 6, "referral"),
         ]
         # Title-company partners (a primary buyer-sourcing channel).
-        title_partners = [
-            TitleCompany(name="First American Title - Houston", contact_name="Dana Ruiz",
-                         phone="+17135551100", email="dana@fat-houston.com",
-                         coverage_states="TX", referral_fee=500),
-            TitleCompany(name="Michigan Title Group", contact_name="Carl Brooks",
-                         phone="+13135551100", email="carl@mititlegroup.com",
-                         coverage_states="MI", referral_fee=750),
-            TitleCompany(name="Stewart Title - Wayne County", contact_name="Lena Park",
-                         phone="+13135551101", email="lena@stewartwayne.com",
-                         coverage_states="MI", referral_fee=500),
+        title_partners_spec = [
+            ("First American Title - Houston", "Dana Ruiz", "+17135551100", "dana@fat-houston.com", "TX", 500),
+            ("Michigan Title Group", "Carl Brooks", "+13135551100", "carl@mititlegroup.com", "MI", 750),
+            ("Stewart Title - Wayne County", "Lena Park", "+13135551101", "lena@stewartwayne.com", "MI", 500),
+            ("Chicago Title - Dallas", "Marcus Lee", "+17135551102", "marcus@ctdallas.com", "TX", 600),
+            ("Oakland County Title Co", "Rita Singh", "+13135551103", "rita@oaklandtitle.com", "MI", 650),
+            ("Old Republic - Austin", "Victor Diaz", "+17135551104", "victor@oraustin.com", "TX", 550),
         ]
-        for tc in title_partners:
-            db.add(tc)
+        title_partners = []
+        for name, contact, phone, email, cov, fee in title_partners_spec:
+            existing = db.execute(select(TitleCompany).where(TitleCompany.name == name)).scalars().first()
+            tc = existing or TitleCompany(name=name, contact_name=contact, phone=phone,
+                                           email=email, coverage_states=cov, referral_fee=fee)
+            if existing is None:
+                db.add(tc)
+            title_partners.append(tc)
         db.flush()
-        mi_partner = title_partners[1].id  # Michigan Title Group
+        mi_partner = next((t.id for t in title_partners if "Michigan Title" in t.name), title_partners[0].id)
+        tx_partner = next((t.id for t in title_partners if "Dallas" in t.name), title_partners[0].id)
 
         buyers = []
-        for name, company, phone, email, states, cities_str, lo, hi, mn_b, mx_b, rehab, rank in buyers_spec:
+        for name, company, phone, email, states, cities_str, lo, hi, mn_b, mx_b, rehab, rank, source in buyers_spec:
+            existing = db.execute(select(Buyer).where(Buyer.email == email)).scalars().first()
+            if existing:
+                buyers.append(existing)
+                continue
             b = Buyer(name=name, company=company, phone=phone, email=email,
                       target_states=states, target_cities=cities_str,
                       min_price=lo, max_price=hi, min_beds=mn_b, max_beds=mx_b,
-                      rehab_level=rehab, ranking=rank)
-            # MI buyers come from the Michigan title-company partnership.
-            if states == "MI":
-                b.source = "title_partner"
-                b.title_company_id = mi_partner
-            else:
-                b.source = "network"
+                      rehab_level=rehab, ranking=rank, source=source)
+            # Title-partner buyers link to a title company in their state.
+            if source == "title_partner":
+                b.title_company_id = mi_partner if states == "MI" else tx_partner
             db.add(b)
             buyers.append(b)
         db.flush()
 
-        # One contract to show the full pipeline
-        if leads and leads[0].valuations:
+        # One contract to show the full pipeline (idempotent per lead)
+        if leads and leads[0].valuations and not leads[0].contracts:
             val = leads[0].valuations[0]
             matched = match_buyers_for_lead(db, leads[0], val)
-            top_buyer = matched[0] if matched else buyers[0]
-            contract = Contract(
-                lead_id=leads[0].id,
-                buyer_id=top_buyer.id,
-                contract_price=val.mao,
-                assignment_fee=15000,
-                buyer_price=val.mao + 15000,
-                status="signed",
-                signed_at=datetime.now() - timedelta(days=2),
-                disclosure_sent=True,
-                notes="Assignment contract. TX disclosure sent.",
-            )
-            db.add(contract)
-            leads[0].status = LeadStatus.UNDER_CONTRACT
+            top_buyer = matched[0] if matched else (buyers[0] if buyers else None)
+            if top_buyer is not None:
+                contract = Contract(
+                    lead_id=leads[0].id,
+                    buyer_id=top_buyer.id,
+                    contract_price=val.mao,
+                    assignment_fee=15000,
+                    buyer_price=val.mao + 15000,
+                    status="signed",
+                    signed_at=datetime.now() - timedelta(days=2),
+                    disclosure_sent=True,
+                    notes="Assignment contract. TX disclosure sent.",
+                )
+                db.add(contract)
+                leads[0].status = LeadStatus.UNDER_CONTRACT
+
+        # A second contract in a different status to show pipeline variety.
+        if len(leads) > 4 and leads[4].valuations and buyers and not leads[4].contracts:
+            val2 = leads[4].valuations[0] if leads[4].valuations else None
+            matched2 = match_buyers_for_lead(db, leads[4], val2) if val2 else []
+            buyer2 = matched2[0] if matched2 else buyers[1] if len(buyers) > 1 else buyers[0]
+            db.add(Contract(
+                lead_id=leads[4].id,
+                buyer_id=buyer2.id,
+                contract_price=val2.mao if val2 else 120000,
+                assignment_fee=12000,
+                buyer_price=(val2.mao if val2 else 120000) + 12000,
+                status="pending",
+                disclosure_sent=False,
+                notes="Pending assignment — awaiting seller signature.",
+            ))
+
+        # ── Meetings (schedule a few across leads + statuses) ───────────────
+        existing_meetings = db.execute(select(Meeting)).scalars().all()
+        if not existing_meetings:
+            meeting_specs = [
+                (leads[1] if len(leads) > 1 else None, "Property walkthrough", timedelta(hours=2), "On site at the property"),
+                (leads[2] if len(leads) > 2 else None, "Offer meeting", timedelta(days=1, hours=3), "Coffee shop, Houston"),
+                (leads[3] if len(leads) > 3 else None, "Signing appointment", timedelta(days=2), "Title company office"),
+            ]
+            for lead, title, delta, loc in meeting_specs:
+                if lead is None:
+                    continue
+                db.add(Meeting(
+                    lead_id=lead.id,
+                    title=title,
+                    scheduled_at=datetime.now() + delta,
+                    location=loc,
+                    notes=f"Auto-seeded meeting for {lead.owner_name}",
+                    reminder_minutes=120,
+                    reminder_sent=False,
+                ))
+
+        # ── Message logs (a few outbound SMS + one inbound STOP) ────────────
+        existing_msgs = db.execute(select(MessageLog)).scalars().all()
+        if not existing_msgs:
+            for lead in leads[:4]:
+                callable_phones = [p for p in lead.phones if not p.dnc_flagged and not p.opted_out]
+                if not callable_phones:
+                    continue
+                ph = callable_phones[0]
+                db.add(MessageLog(
+                    lead_id=lead.id, phone_id=ph.id,
+                    channel=MessageChannel.SMS, direction=MessageDirection.OUTBOUND,
+                    to_number=ph.number, body="Hi {{ lead.owner_name }}, following up on your property. — DRE Capital",
+                    status="sent", sent_by=user.id,
+                ))
+            # One inbound opt-out reply on a different lead to demo compliance.
+            if len(leads) > 6:
+                ph_in = next((p for p in leads[6].phones if not p.opted_out), None)
+                if ph_in:
+                    db.add(MessageLog(
+                        lead_id=leads[6].id, phone_id=ph_in.id,
+                        channel=MessageChannel.SMS, direction=MessageDirection.INBOUND,
+                        from_number=ph_in.number, body="please stop",
+                        status="opt-out received",
+                    ))
+
+        # ── Scrape jobs (history for the seeded sources) ────────────────────
+        sources = db.execute(select(ScrapeSource)).scalars().all()
+        existing_jobs = db.execute(select(ScrapeJob)).scalars().all()
+        if sources and not existing_jobs:
+            for src in sources[:3]:
+                db.add(ScrapeJob(
+                    source_id=src.id,
+                    status=ScrapeJobStatus.COMPLETED,
+                    search_params=src.search_params,
+                    total_found=random.randint(20, 180),
+                    imported=random.randint(5, 40),
+                    skipped=random.randint(0, 20),
+                    started_at=datetime.now() - timedelta(days=1, hours=random.randint(0, 6)),
+                    completed_at=datetime.now() - timedelta(days=1),
+                ))
+            # One failed job to demo error handling.
+            if len(sources) > 1:
+                db.add(ScrapeJob(
+                    source_id=sources[1].id,
+                    status=ScrapeJobStatus.FAILED,
+                    search_params=sources[1].search_params,
+                    total_found=0, imported=0, skipped=0,
+                    error_message="Connection timed out reaching county server (mock seed).",
+                    started_at=datetime.now() - timedelta(days=2),
+                    completed_at=datetime.now() - timedelta(days=2),
+                ))
+
+        # ── Settings rows (sensible defaults, idempotent) ────────────────────
+        settings_defaults = [
+            ("company_name", "Direct Real Estate Capital LLC", "general", "Company name"),
+            ("auto_scrape_enabled", "0", "scraper", "Daily auto-scrape on/off"),
+            ("auto_scrape_hour", "6", "scraper", "Hour (0-23) to run daily scrape"),
+            ("comps_provider", "mock", "comps", "Active comps provider"),
+            ("meeting_reminders_enabled", "1", "meetings", "Send meeting SMS reminders"),
+        ]
+        for key, value, category, label in settings_defaults:
+            if db.get(Setting, key) is None:
+                db.add(Setting(key=key, value=value, category=category, label=label))
 
         db.commit()
-        print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 1 contract.")
+        print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 2 contracts, meetings, message logs, scrape jobs, settings.")
     finally:
         db.close()
 

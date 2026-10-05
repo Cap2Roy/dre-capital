@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.models import ScrapeJob, ScrapeSource, ScrapeJobStatus
 from app.services.scraper import run_scrape_job
-from app.services.settings import get_setting
+from app.services.settings import get_setting, set_setting
 
 log = logging.getLogger("dre_capital.scheduler")
 
@@ -72,7 +72,7 @@ def run_daily_auto_scrape(db=None) -> dict:
             except Exception as exc:  # noqa: BLE001 — one bad source can't stop the rest
                 log.exception("Auto-scrape job for %s failed: %s", src.name, exc)
                 job.status = ScrapeJobStatus.FAILED
-                job.error = str(exc)[:500]
+                job.error_message = str(exc)[:500]
                 db.commit()
                 failed += 1
             ran += 1
@@ -108,7 +108,10 @@ async def scheduler_loop() -> None:
                 now = datetime.now()
                 target_hour = _auto_scrape_hour(db)
                 today_key = now.strftime("%Y-%m-%d")
-                # Only run once per day, and only at/after the configured hour.
+                # Persist last-run date in Settings so a restart doesn't
+                # re-run the daily scrape on the same day.
+                if last_run_date is None:
+                    last_run_date = get_setting(db, "last_auto_scrape_date")
                 if last_run_date == today_key:
                     continue
                 if now.hour < target_hour:
@@ -116,6 +119,8 @@ async def scheduler_loop() -> None:
                 log.info("Starting daily auto-scrape at %s", now.isoformat())
                 run_daily_auto_scrape(db)
                 last_run_date = today_key
+                set_setting(db, "last_auto_scrape_date", today_key)
+                db.commit()
             finally:
                 db.close()
         except asyncio.CancelledError:  # app shutdown

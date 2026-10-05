@@ -6,6 +6,7 @@ Inbound STOP/UNSUBSCRIBE keywords instantly opt the number out (DNC).
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from jinja2 import Template
@@ -23,7 +24,7 @@ from app.models import (
 
 
 # Keywords Twilio routes to the webhook when someone texts "stop" etc.
-_STOP_KEYWORDS = {"stop", "stopall", "unsubscribe", "cancel", "quit", "end", "halt"}
+_STOP_KEYWORDS = {"stop", "stopall", "unsubscribe", "quit"}
 
 
 def get_sms_client(db: Session):
@@ -63,13 +64,24 @@ def render_template(raw_body: str, lead: Lead) -> str:
     }
     return Template(raw_body).render(**ctx)
 
+def _digits_only(number: Optional[str]) -> str:
+    return re.sub(r"\D", "", number or "") if number else ""
 
 def find_phone_by_number(db: Session, number: str) -> Optional[Phone]:
     """Resolve a normalized E.164 phone number to a Phone row (inbound SMS)."""
-    cleaned = number.strip()
-    return db.execute(
-        select(Phone).where(Phone.number == cleaned)
+    cleaned = _digits_only(number)
+    if not cleaned:
+        return None
+    # Prefer an exact stored match, then a digits-only comparison so a
+    # provider's formatted inbound number still matches a stored row.
+    phone = db.execute(
+        select(Phone).where(Phone.number == number.strip())
     ).scalars().first()
+    if phone is None:
+        phone = db.execute(
+            select(Phone).where(_digits_only(Phone.number) == cleaned)
+        ).scalars().first()
+    return phone
 
 
 def send_sms(
@@ -162,10 +174,12 @@ def handle_inbound_sms(
     )
     db.add(entry)
 
-    # Honor opt-out keywords (STOP, STOPALL, UNSUBSCRIBE, …).
-    first_word = normalized_body.split()[0] if normalized_body else ""
+    # Honor opt-out keywords (STOP, STOPALL, UNSUBSCRIBE, QUIT) as standalone
+    # tokens anywhere in the message, so "please stop" still opts out, while
+    # "I'm not stopping" does not.  Punctuation is stripped before splitting.
+    tokens = set(re.findall(r"[a-z]+", normalized_body))
     opted_out = False
-    if first_word in _STOP_KEYWORDS:
+    if tokens & _STOP_KEYWORDS:
         if phone:
             from app.services.skiptrace import mark_opted_out
             mark_opted_out(db, phone)

@@ -63,10 +63,10 @@ def contract_context(db: Session, contract: Contract, party: str) -> dict:
         "property_state": lead.property_state or "",
         "property_zip": lead.property_zip or "",
         "mailing_address": lead.mailing_address or lead.property_address or "",
-        "beds": lead.beds,
-        "baths": lead.baths,
-        "sqft": lead.sqft,
-        "year_built": lead.year_built,
+        "beds": lead.beds if lead.beds is not None else "N/A",
+        "baths": lead.baths if lead.baths is not None else "N/A",
+        "sqft": lead.sqft if lead.sqft is not None else "N/A",
+        "year_built": lead.year_built if lead.year_built is not None else "N/A",
         "contract_price": contract.contract_price,
         "assignment_fee": contract.assignment_fee,
         "buyer_price": contract.buyer_price,
@@ -76,6 +76,13 @@ def contract_context(db: Session, contract: Contract, party: str) -> dict:
     }
     ctx.update(_operator_context(db, lead))
     buyer = contract.buyer
+    # Safe defaults so the buyer block renders cleanly when no buyer is matched.
+    ctx.update({
+        "buyer_name": "",
+        "buyer_company": "",
+        "buyer_phone": "",
+        "buyer_email": "",
+    })
     if buyer is not None:
         ctx.update({
             "buyer_name": buyer.name or "",
@@ -132,39 +139,76 @@ def send_contract_email(
 ) -> MessageLog:
     """Email the rendered contract document to the seller or buyer.
 
-    Honesty contract: raises ``RuntimeError`` if SMTP is not configured — we do
-    NOT record a phantom "sent".  On success, records a MessageLog
-    (channel=EMAIL) and returns it.
+    Honesty contract: raises ``RuntimeError`` if SMTP is not configured — we
+    never record a phantom "sent".  When SMTP is configured, sends via
+    ``smtplib`` and records a MessageLog (channel=EMAIL) with status
+    ``sent`` (or ``failed`` if the SMTP relay rejects it, in which case the
+    row is still persisted for audit but a RuntimeError is raised so the
+    operator sees the failure).
     """
-    if not _smtp_configured(db):
+    host = (get_setting(db, "smtp_host") or "").strip()
+    frm = (get_setting(db, "smtp_from") or "").strip()
+    if not (host and frm):
         raise RuntimeError(
             "SMTP is not configured (set smtp_host + smtp_from). "
             "Email delivery is unavailable until an SMTP provider is wired in Settings."
         )
-    body = render_contract_document(db, contract, party)
     lead = contract.lead
     tpl = find_contract_template(db, party)
-    # Resolve recipient: explicit override, else buyer email for buyer party,
-    # else the lead's owner email (not stored on Lead — fall back to None).
+    # Resolve recipient: explicit override, else buyer email (buyer party),
+    # else the lead's owner_email (seller party).
     if to_address is None and party == "buyer" and contract.buyer:
         to_address = contract.buyer.email
+    if to_address is None and party == "seller":
+        to_address = lead.owner_email
     if not to_address:
         raise ValueError("No recipient email address available for this contract party")
 
+    body = render_contract_document(db, contract, party)
     subject = (tpl.subject if tpl and tpl.subject else f"Contract for {lead.property_address}")
     entry = MessageLog(
         lead_id=lead.id,
         channel=MessageChannel.EMAIL,
         direction=MessageDirection.OUTBOUND,
-        to_number=to_address,
+        to_address=to_address,
+        from_number=frm,
         subject=subject[:256],
         body=body,
         status="queued",
         template_id=tpl.id if tpl else None,
         sent_by=sent_by,
     )
-    # NOTE: actual SMTP send is deferred until a provider is wired.  When added,
-    # send here and set entry.status = "sent" / "failed" + a provider message id.
     db.add(entry)
     db.flush()
+
+    # ── Actual SMTP delivery ───────────────────────────────────────
+    port = int(get_setting(db, "smtp_port") or 587)
+    user = (get_setting(db, "smtp_user") or "").strip() or None
+    password = (get_setting(db, "smtp_password") or "").strip() or None
+    use_tls = port in (465, 587)
+    err = None
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(body)
+        msg["Subject"] = subject[:256]
+        msg["From"] = frm
+        msg["To"] = to_address
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=30) as srv:
+                if user: srv.login(user, password or "")
+                srv.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=30) as srv:
+                srv.ehlo()
+                if use_tls: srv.starttls(); srv.ehlo()
+                if user: srv.login(user, password or "")
+                srv.send_message(msg)
+        entry.status = "sent"
+    except Exception as exc:  # noqa: BLE001
+        err = str(exc)[:500]
+        entry.status = "failed"
+    db.flush()
+    if err:
+        raise RuntimeError(f"SMTP send failed: {err}")
     return entry

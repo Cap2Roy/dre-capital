@@ -50,8 +50,9 @@ def match_for_lead(lead_id: str, db: Session = Depends(get_db)):
 def sourcing_overview(db: Session = Depends(get_db)):
     """How the buyer network is sourced, and which title partners feed it."""
     buyers = db.execute(select(Buyer).order_by(Buyer.ranking.asc())).scalars().all()
+    active_buyers = [b for b in buyers if b.active]
     by_source: dict[str, int] = {}
-    for b in buyers:
+    for b in active_buyers:
         by_source[b.source or "network"] = by_source.get(b.source or "network", 0) + 1
 
     partners = db.execute(
@@ -59,7 +60,7 @@ def sourcing_overview(db: Session = Depends(get_db)):
     ).scalars().all()
     partners_out = []
     for p in partners:
-        refs = [b for b in buyers if b.title_company_id == p.id]
+        refs = [b for b in active_buyers if b.title_company_id == p.id]
         partners_out.append({
             "id": p.id,
             "name": p.name,
@@ -70,7 +71,8 @@ def sourcing_overview(db: Session = Depends(get_db)):
             "buyer_names": [b.name for b in refs],
         })
     return {
-        "total_buyers": len(buyers),
+        "total_buyers": len(active_buyers),
+        "total_buyers_all": len(buyers),
         "by_source": by_source,
         "title_partners": partners_out,
         "total_partners": len(partners),
@@ -114,9 +116,11 @@ def delete_title_company(tc_id: str, db: Session = Depends(get_db)):
     tc = db.get(TitleCompany, tc_id)
     if not tc:
         raise HTTPException(404, "Title company not found")
-    # Unlink any buyers pointing at this partner.
+    # Unlink any buyers pointing at this partner; they revert to network sourcing.
     for b in tc.buyers:
         b.title_company_id = None
+        if b.source == "title_partner":
+            b.source = "network"
     db.delete(tc)
     db.commit()
     return {"ok": True}

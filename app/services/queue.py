@@ -38,7 +38,14 @@ def get_next_lead_to_dial(
     Returns ``{"lead": Lead, "phone": Phone}`` so the UI can fire the call
     immediately without a second round-trip.
     """
-    q = select(Lead).where(Lead.status != LeadStatus.DEAD)
+    q = select(Lead).where(
+        Lead.status.notin_([
+            LeadStatus.DEAD,
+            LeadStatus.UNDER_CONTRACT,
+            LeadStatus.ASSIGNED,
+            LeadStatus.CLOSED,
+        ])
+    )
     if state:
         q = q.where(Lead.property_state == state.upper())
     if exclude_lead_ids:
