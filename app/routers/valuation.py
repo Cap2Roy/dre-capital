@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Comp, Lead
 from app.schemas import ValuationOut, ValuationRequest
-from app.services.valuation import mock_comps_for_lead, run_valuation
+from app.services.comps import get_comps_for_lead
+from app.services.valuation import run_valuation
 
 router = APIRouter(prefix="/api/leads/{lead_id}/valuation", tags=["valuation"])
 
@@ -25,7 +26,8 @@ def create_valuation(lead_id: str, payload: ValuationRequest, db: Session = Depe
 
     existing_comps = db.query(Comp).filter_by(lead_id=lead_id).count()
     if existing_comps == 0:
-        for c in mock_comps_for_lead(lead, count=6):
+        comps, _provider = get_comps_for_lead(db, lead, count=6)
+        for c in comps:
             db.add(c)
         db.flush()
 

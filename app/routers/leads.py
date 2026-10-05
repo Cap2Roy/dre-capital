@@ -76,6 +76,12 @@ def list_leads(
         "page_size": page_size,
     }
 
+@router.get("/comps/status")
+def comps_status(db: Session = Depends(get_db)):
+    """Report the active comps provider (mock vs real) + key configured."""
+    from app.services.comps import comps_provider_status
+    return comps_provider_status(db)
+
 
 @router.get("/{lead_id}", response_model=LeadOut)
 def get_lead(lead_id: str, db: Session = Depends(get_db)):
