@@ -196,14 +196,53 @@ async function initiateCall(phoneId) {
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 
-function openLogCallModal(callId, phoneId) {
+let _defaultCallFlow = null;
+async function loadDefaultCallFlow() {
+  if (_defaultCallFlow !== null) return _defaultCallFlow;
+  try {
+    _defaultCallFlow = await API.get("/api/call-flows/default");
+  } catch (e) { _defaultCallFlow = null; }
+  return _defaultCallFlow;
+}
+
+function renderCallFlowScript(flow) {
+  if (!flow) return "";
+  const esc = s => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  const qs = (flow.questions || []).map((q, i) => `<li>${esc(q)}</li>`).join("");
+  const rs = (flow.rules || []).map(r => `<li>${esc(r)}</li>`).join("");
+  const sc = flow.scoring || {};
+  return `
+    <details class="call-flow-script" style="margin-bottom:16px; border:1px solid var(--border-2); border-radius:8px; padding:12px; background:var(--bg-1)">
+      <summary style="cursor:pointer; font-weight:600">📋 Call Flow: ${esc(flow.name)}</summary>
+      <div style="margin-top:12px; font-size:var(--fs-sm); line-height:1.6">
+        <p><strong>Role:</strong> ${esc(flow.role)}</p>
+        <p><strong>Opening:</strong> ${esc(flow.opening)}</p>
+        <p style="margin-top:8px"><strong>Questions:</strong></p>
+        <ol style="margin:4px 0 8px 20px">${qs}</ol>
+        <p><strong>Rules:</strong></p>
+        <ul style="margin:4px 0 8px 20px">${rs}</ul>
+        <p><strong>Close:</strong> ${esc(flow.close)}</p>
+        <p style="margin-top:8px"><strong>Scoring:</strong></p>
+        <ul style="margin:4px 0 0 20px">
+          ${sc.hot ? `<li><span class="badge badge-success">Hot</span> ${esc(sc.hot)}</li>` : ""}
+          ${sc.warm ? `<li><span class="badge badge-warning">Warm</span> ${esc(sc.warm)}</li>` : ""}
+          ${sc.cold ? `<li><span class="badge badge-neutral">Cold</span> ${esc(sc.cold)}</li>` : ""}
+        </ul>
+      </div>
+    </details>`;
+}
+
+async function openLogCallModal(callId, phoneId) {
+  const flow = await loadDefaultCallFlow();
   const outcomes = [
     ["no_answer","No Answer"], ["voicemail","Voicemail"], ["wrong_number","Wrong Number"],
     ["not_interested","Not Interested"], ["callback_requested","Callback Requested"],
     ["warm","Warm Lead"], ["offer_sent","Offer Sent"], ["verbal_yes","Verbal Yes!"],
     ["dnc_request","DNC Request"],
   ];
+  const flowHtml = renderCallFlowScript(flow);
   const html = `
+    ${flowHtml}
     <div class="form-group"><label class="form-label">Outcome</label>
       <select class="form-select" id="call-outcome">${outcomes.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div>
     <div class="form-group"><label class="form-label">Duration (seconds)</label><input class="form-input" id="call-dur" type="number" value="0"></div>

@@ -16,7 +16,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Stack the lists** | Dedup by address, count list overlap per property → **stack depth**. 3+ = call today, 2 = this week, 1 = mail only. |
 | **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. Pluggable comps provider seam (mock by default; real RentCast/MLS drops in). |
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
-| **Make the call** | Compliant **click-to-call** via Twilio (manual-dial only — no autodialer). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead (keep-dialing). |
+| **Make the call** | Compliant **click-to-call** via Twilio (manual-dial only — no autodialer). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead (keep-dialing). **Editable call flows** — structured qualification scripts (role, opening, ordered questions, rules, close, Hot/Warm/Cold scoring) the operator follows live; create/edit/set-default in Settings → Call Flows, shown in the Log-Call modal. Seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS via Twilio — template CRUD, manual send, inbound webhook logging, **STOP-keyword auto opt-out** for DNC compliance. |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
@@ -113,6 +113,12 @@ POST /api/import/csv              — upload county CSV
 GET  /api/import/lists            — list source lists
 POST /api/calls/initiate          — click-to-call (compliant)
 POST /api/calls/{id}/log          — log call outcome + auto-followup
+GET  /api/call-flows             — list call flows (filter ?active=true)
+GET  /api/call-flows/default     — the default (or most recent active) flow
+GET  /api/call-flows/{id}        — one flow
+POST /api/call-flows             — create flow (admin)
+PATCH /api/call-flows/{id}       — update flow (admin; is_default demotes others)
+DELETE /api/call-flows/{id}      — delete flow (admin)
 GET  /api/buyers                  — buyer network
 GET  /api/buyers/match/{lead_id}  — buy-box matched buyers
 POST /api/contracts               — create assignment contract
@@ -136,6 +142,7 @@ dre-capital/
 │   │   ├── importer.py       — CSV import + stack recompute
 │   │   ├── valuation.py      — comps + MAO
 │   │   ├── calls.py          — click-to-call + logging
+│   │   ├── call_flows.py    — call flow CRUD (qualification scripts)
 │   │   ├── buyers.py         — buyer network + matching
 │   │   └── contracts.py      — assignment contracts
 │   ├── services/             — business logic

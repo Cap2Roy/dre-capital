@@ -249,6 +249,13 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "RENTCAST_API_KEY",
         "description": "API key for RentCast property data API (free tier: 50 calls/mo). Get one at https://app.rentcast.io/api",
     },
+    "default_call_flow_id": {
+        "label": "Default Call Flow",
+        "category": "calling",
+        "is_secret": False,
+        "env": "",
+        "description": "ID of the call flow used by default when initiating a manual call.",
+    },
 }
 
 

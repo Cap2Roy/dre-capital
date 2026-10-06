@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class ORMBase(BaseModel):
@@ -374,6 +374,70 @@ class MessageTemplateUpdate(BaseModel):
     body: Optional[str] = None
     active: Optional[bool] = None
 
+
+# ── Call flows (qualification scripts) ───────────────────────────────────────
+
+class CallFlowOut(ORMBase):
+    id: str
+    name: str
+    description: Optional[str] = None
+    role: str
+    opening: str
+    questions: list[str] = []
+    rules: list[str] = []
+    close: str
+    scoring: dict = {}
+    is_default: bool
+    active: bool
+    created_at: datetime
+
+    @field_validator("questions", "rules", mode="before")
+    @classmethod
+    def _parse_json_list(cls, v):
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v) or []
+            except (ValueError, TypeError):
+                return []
+        return v or []
+
+    @field_validator("scoring", mode="before")
+    @classmethod
+    def _parse_json_dict(cls, v):
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v) or {}
+            except (ValueError, TypeError):
+                return {}
+        return v or {}
+
+
+class CallFlowCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    role: str = ""
+    opening: str = ""
+    questions: list[str] = []
+    rules: list[str] = []
+    close: str = ""
+    scoring: dict = {}
+    is_default: bool = False
+    active: bool = True
+
+
+class CallFlowUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    role: Optional[str] = None
+    opening: Optional[str] = None
+    questions: Optional[list[str]] = None
+    rules: Optional[list[str]] = None
+    close: Optional[str] = None
+    scoring: Optional[dict] = None
+    is_default: Optional[bool] = None
+    active: Optional[bool] = None
 
 class MessageLogOut(ORMBase):
     id: str

@@ -280,8 +280,10 @@ class Call(TimestampMixin, Base):
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     call_sid: Mapped[Optional[str]] = mapped_column(String(64))  # Twilio call SID
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id"), nullable=True)
     lead: Mapped["Lead"] = relationship(back_populates="calls")
     caller: Mapped[Optional["User"]] = relationship(back_populates="calls")
+    call_flow: Mapped[Optional["CallFlow"]] = relationship(back_populates="calls")
 
 
 class FollowUp(TimestampMixin, Base):
@@ -442,6 +444,35 @@ class ScrapeResult(TimestampMixin, Base):
     imported: Mapped[bool] = mapped_column(Boolean, default=False)
     imported_lead_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     job: Mapped["ScrapeJob"] = relationship(back_populates="results")
+
+# ── Call flows (qualification scripts) ────────────────────────────────────────
+
+class CallFlow(TimestampMixin, Base):
+    """A reusable call-qualification script the operator follows on a manual call.
+
+    Stores the persona/role, opening line, ordered questions, do/don't rules,
+    closing line, and a Hot/Warm/Cold scoring rubric.  ``questions``, ``rules``,
+    and ``scoring`` are stored as JSON strings (SQLite has no native JSON type).
+    Exactly one flow may be marked ``is_default``; the rest are user-created.
+    """
+    __tablename__ = "call_flows"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # Persona context: "You are Sam, an assistant calling on behalf of <Company>…"
+    role: Mapped[str] = mapped_column(Text)
+    opening: Mapped[str] = mapped_column(Text)
+    # JSON array of ordered question strings
+    questions: Mapped[str] = mapped_column(Text, default="[]")
+    # JSON array of rule strings (do/don't)
+    rules: Mapped[str] = mapped_column(Text, default="[]")
+    close: Mapped[str] = mapped_column(Text)
+    # JSON object: {"hot": "...", "warm": "...", "cold": "..."}
+    scoring: Mapped[str] = mapped_column(Text, default="{}")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    calls: Mapped[list["Call"]] = relationship(back_populates="call_flow")
+
 
 
 # ── Message templates & SMS/email history ────────────────────────────────────

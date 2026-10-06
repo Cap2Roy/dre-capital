@@ -14,6 +14,7 @@
   <button class="settings-tab" data-tab="calling" onclick="switchTab('calling')">Calling &amp; API Keys</button>
   <button class="settings-tab" data-tab="cadence" onclick="switchTab('cadence')">Call Follow-up</button>
   {% if is_admin %}<button class="settings-tab" data-tab="team" onclick="switchTab('team')">Team Members</button>{% endif %}
+  {% if is_admin %}<button class="settings-tab" data-tab="flows" onclick="switchTab('flows')">Call Flows</button>{% endif %}
 </div>
 
 <!-- ── Profile Tab ────────────────────────────────────────────── -->
@@ -229,6 +230,19 @@
     </div>
     <div class="card-body" id="users-list">
       <div class="empty-state"><div class="icon">⊕</div>Loading users…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Call Flows Tab (admin only) ─────────────────────────────── -->
+<div class="settings-panel" id="tab-flows">
+  <div class="card">
+    <div class="card-header">
+      Call Flows
+      <button class="btn btn-gold btn-sm" onclick="showCallFlowModal()">+ New Call Flow</button>
+    </div>
+    <div class="card-body" id="call-flows-list">
+      <div class="empty-state"><div class="icon">📋</div>Loading call flows…</div>
     </div>
   </div>
 </div>
@@ -515,8 +529,111 @@ async function deactivateUser(id, name) {
 
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 
+// ── Call Flows ──────────────────────────────────────────────────
+async function loadCallFlows() {
+  try {
+    const flows = await API.get("/api/call-flows");
+    const el = document.getElementById("call-flows-list");
+    if (!flows || flows.length === 0) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">📋</div>No call flows yet. Click "+ New Call Flow".</div>';
+      return;
+    }
+    el.innerHTML = flows.map(f => `
+      <div class="card mb-2" style="box-shadow:none; border:1px solid var(--border-2)">
+        <div class="card-body" style="padding:12px">
+          <div style="display:flex; justify-content:space-between; align-items:start; gap:12px">
+            <div>
+              <strong>${esc(f.name)}</strong>
+              ${f.is_default ? '<span class="badge badge-success" style="margin-left:8px">Default</span>' : ''}
+              ${!f.active ? '<span class="badge badge-neutral" style="margin-left:4px">Inactive</span>' : ''}
+              ${f.description ? `<div class="text-sm text-muted" style="margin-top:4px">${esc(f.description)}</div>` : ''}
+              <div class="text-xs text-muted" style="margin-top:4px">${(f.questions||[]).length} questions · ${(f.rules||[]).length} rules</div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="showCallFlowModal('${f.id}')">Edit</button>
+              ${!f.is_default ? `<button class="btn btn-outline btn-sm" onclick="setDefaultFlow('${f.id}')">Set Default</button>` : ''}
+              <button class="btn btn-outline btn-sm" onclick="deleteFlow('${f.id}','${esc(f.name)}')">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>`).join("");
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+async function showCallFlowModal(id) {
+  let flow = null;
+  if (id) {
+    try { flow = await API.get(`/api/call-flows/${id}`); } catch (err) { toast("Error: " + err.message, "error"); return; }
+  }
+  const f = flow || {};
+  const qs = (f.questions || []).map(q => esc(q)).join("\\n");
+  const rs = (f.rules || []).map(r => esc(r)).join("\\n");
+  const sc = f.scoring || {};
+  const html = `
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="cf-name" value="${esc(f.name || '')}"></div>
+    <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="cf-desc" value="${esc(f.description || '')}"></div>
+    <div class="form-group"><label class="form-label">Role / Persona</label><textarea class="form-textarea" id="cf-role" rows="3">${esc(f.role || '')}</textarea></div>
+    <div class="form-group"><label class="form-label">Opening Line</label><textarea class="form-textarea" id="cf-opening" rows="3">${esc(f.opening || '')}</textarea></div>
+    <div class="form-group"><label class="form-label">Questions (one per line, in order)</label><textarea class="form-textarea" id="cf-questions" rows="8">${qs}</textarea></div>
+    <div class="form-group"><label class="form-label">Rules (one per line)</label><textarea class="form-textarea" id="cf-rules" rows="6">${rs}</textarea></div>
+    <div class="form-group"><label class="form-label">Closing Line</label><textarea class="form-textarea" id="cf-close" rows="2">${esc(f.close || '')}</textarea></div>
+    <div class="form-group"><label class="form-label">Scoring — Hot</label><input class="form-input" id="cf-hot" value="${esc(sc.hot || '')}"></div>
+    <div class="form-group"><label class="form-label">Scoring — Warm</label><input class="form-input" id="cf-warm" value="${esc(sc.warm || '')}"></div>
+    <div class="form-group"><label class="form-label">Scoring — Cold</label><input class="form-input" id="cf-cold" value="${esc(sc.cold || '')}"></div>
+    <div class="form-group"><label class="form-label"><input type="checkbox" id="cf-default" ${f.is_default ? 'checked' : ''}> Set as default flow</label></div>
+    <div class="form-group"><label class="form-label"><input type="checkbox" id="cf-active" ${f.active !== false ? 'checked' : ''}> Active</label></div>`;
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveCallFlow('${id || ''}')">${id ? 'Save' : 'Create'}</button>`;
+  openModal(id ? "Edit Call Flow" : "New Call Flow", html, footer);
+}
+
+async function saveCallFlow(id) {
+  const split = (id2) => (document.getElementById(id2).value || "").split("\\n").map(s => s.trim()).filter(Boolean);
+  const body = {
+    name: document.getElementById("cf-name").value.trim(),
+    description: document.getElementById("cf-desc").value.trim() || null,
+    role: document.getElementById("cf-role").value,
+    opening: document.getElementById("cf-opening").value,
+    questions: split("cf-questions"),
+    rules: split("cf-rules"),
+    close: document.getElementById("cf-close").value,
+    scoring: {
+      hot: document.getElementById("cf-hot").value.trim(),
+      warm: document.getElementById("cf-warm").value.trim(),
+      cold: document.getElementById("cf-cold").value.trim(),
+    },
+    is_default: document.getElementById("cf-default").checked,
+    active: document.getElementById("cf-active").checked,
+  };
+  if (!body.name) { toast("Name is required", "error"); return; }
+  try {
+    if (id) await API.patch(`/api/call-flows/${id}`, body);
+    else await API.post("/api/call-flows", body);
+    closeModal();
+    toast(id ? "Call flow updated" : "Call flow created", "success");
+    loadCallFlows();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+async function setDefaultFlow(id) {
+  try {
+    await API.patch(`/api/call-flows/${id}`, { is_default: true });
+    toast("Default call flow set", "success");
+    loadCallFlows();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+async function deleteFlow(id, name) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    await API.delete(`/api/call-flows/${id}`);
+    toast("Call flow deleted", "success");
+    loadCallFlows();
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
 // ── Init ───────────────────────────────────────────────────────
 loadSettings();
-{% if is_admin %}loadUsers();{% endif %}
+{% if is_admin %}loadUsers(); loadCallFlows();{% endif %}
 </script>
 {% endblock %}

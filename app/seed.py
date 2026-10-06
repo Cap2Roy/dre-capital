@@ -19,7 +19,7 @@ from sqlalchemy import select
 from app.database import SessionLocal, init_db
 
 from app.models import (
-    Buyer, Call, CallDirection, CallOutcome, Comp, Contract, FollowUp,
+    Buyer, Call, CallDirection, CallFlow, CallOutcome, Comp, Contract, FollowUp,
     Lead, LeadStatus, ListType, Meeting, MessageChannel, MessageDirection,
     MessageLog, MessageTemplate, Phone, PhoneQuality, ScrapeJob, ScrapeJobStatus,
     ScrapeSource, Setting, SourceList, TitleCompany, User,
@@ -449,6 +449,7 @@ def run() -> None:
         for key, value, category, label in settings_defaults:
             if db.get(Setting, key) is None:
                 db.add(Setting(key=key, value=value, category=category, label=label))
+        seed_default_call_flows(db)
 
         db.commit()
         print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 2 contracts, meetings, message logs, scrape jobs, settings.")
@@ -527,6 +528,75 @@ def seed_default_templates(db) -> None:
         db.commit()
         print(f"Seeded {added} default message templates.")
 
+def seed_default_call_flows(db) -> None:
+    """Idempotently seed the out-of-the-box call qualification flows."""
+    import json
+    existing = {f.name for f in db.query(CallFlow).all()}
+    flows = [
+        {
+            "name": "DFW Qualification — Sam for Eylon",
+            "description": "Default qualification call flow for DFW sellers. Sam confirms details so Eylon (acquisitions) can call back with a real offer.",
+            "role": (
+                "You are Sam, an assistant calling on behalf of [Company Name], a local real estate "
+                "investment company in [Dallas-Fort Worth]. You are not a salesperson. Your only job "
+                "is to confirm a few details so Eylon, the acquisitions manager, can follow up with a "
+                "real offer. Keep the call under 4 minutes."
+            ),
+            "opening": (
+                "Hi, is this [Lead Name]? This is Sam with [Company Name]. You recently reached out "
+                "about possibly selling [Property Address]. I'm not calling to make an offer, I just "
+                "want to confirm a few details so our acquisitions manager can call you back prepared. "
+                "Do you have two minutes?"
+            ),
+            "questions": [
+                "Are you the owner on title? If not, what's your relationship to the owner?",
+                "Is the property occupied? By you, a tenant, or vacant?",
+                "What's the general condition? Any major repairs needed (roof, foundation, HVAC, plumbing)?",
+                "Why are you thinking about selling?",
+                "How soon would you want to close? (ASAP / 30 days / 60 to 90 days / just exploring)",
+                "Do you have a price in mind?",
+                "Is there a mortgage on the property? Roughly how much is owed?",
+                "Are you behind on payments or taxes? (ask gently, only if motivation suggests distress)",
+                "Have you listed it with an agent or spoken to other investors?",
+                "Best time and number for Eylon to call you back?",
+            ],
+            "rules": [
+                "Never quote a price, estimate value, or discuss offers. Say: \"Eylon will cover numbers on the call with you.\"",
+                "Never give legal, tax, or financial advice.",
+                "If asked whether you're an AI, say yes honestly.",
+                "If the lead is hostile, asks to be removed, or says stop calling: confirm removal, end politely, mark Do Not Call.",
+                "Don't push. If they skip a question, move on.",
+                "Confirm the callback window before hanging up.",
+            ],
+            "close": "Perfect, that's all I needed. Eylon will call you [agreed time]. Thanks for your time.",
+            "scoring": {
+                "hot": "owner on title, motivated, wants to close within 30 days, price flexible or distressed.",
+                "warm": "owner, open to selling, 60 to 90 days, has a price in mind.",
+                "cold": "just exploring, unrealistic price, or already listed with an agent.",
+            },
+        },
+    ]
+    added = 0
+    for f in flows:
+        if f["name"] in existing:
+            continue
+        db.add(CallFlow(
+            name=f["name"],
+            description=f["description"],
+            role=f["role"],
+            opening=f["opening"],
+            questions=json.dumps(f["questions"]),
+            rules=json.dumps(f["rules"]),
+            close=f["close"],
+            scoring=json.dumps(f["scoring"]),
+            is_default=True,
+            active=True,
+        ))
+        added += 1
+    if added:
+        db.commit()
+        print(f"Seeded {added} default call flow(s).")
+
 def ensure_admin() -> None:
     """Production helper: create default users + demo data if DB is empty.
 
@@ -592,6 +662,7 @@ def ensure_admin() -> None:
 
         # Out-of-the-box message templates (independent of lead count).
         seed_default_templates(db)
+        seed_default_call_flows(db)
 
         # Seed demo data if DB is empty
         lead_count = db.query(Lead).count()
@@ -600,6 +671,7 @@ def ensure_admin() -> None:
             db.close()
             run()
             seed_default_templates(SessionLocal())
+            seed_default_call_flows(SessionLocal())
             return
     finally:
         db.close()

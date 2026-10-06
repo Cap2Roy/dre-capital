@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.database import init_db
 from app.routers import (
-    auth, buyers, calls, contracts, dashboard, importer, leads, meetings, messages, scraper, settings, users, valuation,
+    auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, meetings, messages, scraper, settings, users, valuation,
 )
 from app.services.scheduler import scheduler_loop
 
@@ -47,7 +47,7 @@ app.mount("/static", StaticFiles(directory=str(_base / "static")), name="static"
 templates = Jinja2Templates(directory=str(_base / "templates"))
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, buyers, contracts, scraper, messages, meetings):
+for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, call_flows, buyers, contracts, scraper, messages, meetings):
     app.include_router(r.router)
 
 
