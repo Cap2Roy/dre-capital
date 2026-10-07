@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.database import init_db
+from app.changelog import CURRENT_VERSION as __version__
 from app.routers import (
     auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, meetings, messages, scraper, settings, users, valuation,
 )
@@ -45,6 +46,10 @@ app = FastAPI(
 _base = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=str(_base / "static")), name="static")
 templates = Jinja2Templates(directory=str(_base / "templates"))
+templates.env.filters["wn_method_class"] = lambda m: {
+    "GET": "badge-info", "POST": "badge-success", "PATCH": "badge-warning",
+    "PUT": "badge-warning", "DELETE": "badge-danger",
+}.get(m, "badge-neutral")
 
 # API routers
 for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, call_flows, buyers, contracts, scraper, messages, meetings):
@@ -53,7 +58,7 @@ for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, c
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "DRE-Capital", "version": "2.0.0"}
+    return {"status": "ok", "service": "DRE-Capital", "version": __version__}
 
 
 # ── Auth middleware (redirect to /login if no session) ─────────────────────
@@ -104,6 +109,8 @@ def _ctx(request: Request) -> dict:
         "user_initials": " ".join(w[0] for w in (user.name or "").split()[:2]).upper() if user else "",
         "user_role": user.role if user else "",
         "is_admin": user.role == "admin" if user else False,
+        "current_version": __version__,
+        "current_version_short": __version__.rsplit(".", 1)[0],
     }
 
 
@@ -154,6 +161,33 @@ def page_scraper(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 def page_settings(request: Request):
     return templates.TemplateResponse("settings.html", {**_ctx(request), "page": "settings"})
+
+@app.get("/whats-new", response_class=HTMLResponse)
+def page_whats_new(request: Request):
+    """What's New — version log + API reference.  Available to all users."""
+    from app.changelog import VERSIONS
+    # Build the API reference live from registered routes so it never drifts.
+    api_routes = []
+    for r in app.routes:
+        methods = getattr(r, "methods", None)
+        path = getattr(r, "path", None)
+        if not (path and path.startswith("/api/") and methods):
+            continue
+        # Skip internal/webhook callbacks that aren't part of the public API.
+        if path in {"/api/calls/twilio-status", "/api/messages/inbound"}:
+            continue
+        api_routes.append({
+            "method": sorted(methods - {"HEAD"})[0] if methods - {"HEAD"} else "GET",
+            "path": path,
+            "tag": next(iter(getattr(r, "tags", []) or []), ""),
+        })
+    api_routes.sort(key=lambda x: (x["path"], x["method"]))
+    return templates.TemplateResponse("whats_new.html", {
+        **_ctx(request),
+        "page": "whats-new",
+        "versions": VERSIONS,
+        "api_routes": api_routes,
+    })
 
 
 # ── Login page (public) ─────────────────────────────────────────────────────

@@ -125,6 +125,9 @@ POST /api/contracts               — create assignment contract
 GET  /api/contracts               — list contracts
 ```
 
+
+The in-app **What's New** page (`/whats-new`, sidebar ★) renders the full version log (newest-first) plus a live API reference generated from the registered routes. The version log lives in `app/changelog.py` — append a new entry to `VERSIONS` for each release.
+
 ## Project Structure
 
 ```
@@ -133,7 +136,7 @@ dre-capital/
 │   ├── main.py              — FastAPI app + page routes
 │   ├── config.py            — env-driven settings
 │   ├── database.py          — SQLAlchemy engine + session
-│   ├── models.py            — domain models (Lead, Phone, Comp, Call, …)
+│   ├── changelog.py          — structured version log (What's New page source)
 │   ├── schemas.py           — Pydantic API schemas
 │   ├── seed.py              — dev data seeder (TX wholesale leads)
 │   ├── routers/             — API endpoints
@@ -152,7 +155,7 @@ dre-capital/
 │   │   ├── calling.py        — Twilio click-to-call + follow-ups
 │   │   ├── buyers.py         — buy-box matching
 │   │   └── importer.py       — CSV import + dedup
-│   ├── templates/            — Jinja2 UI pages
+│   ├── templates/            — Jinja2 UI pages (incl. whats_new.html — version log + API reference)
 │   └── static/               — CSS design system + JS
 ├── deploy/deploy.sh          — GCP Cloud Run deploy script
 ├── Dockerfile

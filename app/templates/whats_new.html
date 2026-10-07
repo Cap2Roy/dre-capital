@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}What's New{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>What's New</h1>
+    <div class="page-subtitle">Version log &amp; API reference — current release <span class="badge badge-gold">v{{ current_version }}</span></div>
+  </div>
+</div>
+
+<!-- ── Tab navigation ─────────────────────────────────────────── -->
+<div class="settings-tabs">
+  <button class="settings-tab active" data-tab="changelog" onclick="wnSwitchTab('changelog')">Version Log</button>
+  <button class="settings-tab" data-tab="api" onclick="wnSwitchTab('api')">API Reference</button>
+</div>
+
+<!-- ── Version Log ────────────────────────────────────────────── -->
+<div class="settings-panel active" id="tab-changelog">
+  {% for v in versions %}
+  <div class="card mb-4">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+      <div>
+        <strong>v{{ v.version }}</strong> — {{ v.title }}
+      </div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <span class="badge badge-neutral">{{ v.date }}</span>
+        {% if v.version == current_version %}<span class="badge badge-success">Current</span>{% endif %}
+      </div>
+    </div>
+    <div class="card-body">
+      {% for section, items in v.sections.items() %}
+      <div style="margin-bottom:16px">
+        <h4 style="margin:0 0 8px 0; font-size:var(--fs-sm); text-transform:uppercase; letter-spacing:0.05em; color:var(--text-2)">{{ section }}</h4>
+        <ul style="margin:0; padding-left:20px; line-height:1.6">
+          {% for item in items %}
+          <li style="margin-bottom:4px">{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── API Reference ──────────────────────────────────────────── -->
+<div class="settings-panel" id="tab-api">
+  <div class="card">
+    <div class="card-header">API Reference <span class="text-muted text-sm" style="font-weight:normal">— {{ api_routes|length }} endpoints, generated live from registered routes</span></div>
+    <div class="card-body" style="padding:0">
+      {% set ns = namespace(current_tag = "") %}
+      <table style="width:100%; font-size:var(--fs-sm)">
+        <tbody>
+        {% for r in api_routes %}
+          {% if r.tag and r.tag != ns.current_tag %}
+            {% set ns.current_tag = r.tag %}
+          <tr><td colspan="2" style="background:var(--surface-2); font-weight:600; padding:8px 12px; text-transform:capitalize; border-top:1px solid var(--border-2)">{{ r.tag }}</td></tr>
+          {% endif %}
+          <tr style="border-bottom:1px solid var(--border-1)">
+            <td style="padding:6px 12px; white-space:nowrap; width:90px">
+              <span class="badge {{ r.method | wn_method_class }}" style="font-family:var(--font-mono); font-size:var(--fs-xs)">{{ r.method }}</span>
+            </td>
+            <td style="padding:6px 12px; font-family:var(--font-mono)">{{ r.path }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card mt-4">
+    <div class="card-header">Authentication</div>
+    <div class="card-body text-sm" style="line-height:1.6">
+      <p>All <code>/api/</code> endpoints (except webhooks) require an authenticated session cookie (<code>dre_session</code>), set by <code>POST /api/auth/login</code>.</p>
+      <p>Write endpoints (create / update / delete) marked <em>admin</em> in the router require an admin-role user. Read endpoints require any authenticated user.</p>
+      <p>Public webhooks (no auth): <code>POST /api/calls/twilio-status</code> (Twilio call-status callback), <code>POST /api/messages/inbound</code> (Twilio SMS inbound).</p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function wnSwitchTab(tabName) {
+  document.querySelectorAll(".settings-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".settings-panel").forEach(p => p.classList.remove("active"));
+  const tab = document.querySelector(`.settings-tab[data-tab="${tabName}"]`);
+  const panel = document.getElementById(`tab-${tabName}`);
+  if (tab) tab.classList.add("active");
+  if (panel) panel.classList.add("active");
+}
+</script>
+<script>
+// Helper to color HTTP method badges — registered as a Jinja filter equivalent in JS.
+// (The class is applied server-side below via wn_method_class.)
+</script>
+{% endblock %}
