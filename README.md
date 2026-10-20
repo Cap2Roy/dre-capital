@@ -16,7 +16,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Stack the lists** | Dedup by address, count list overlap per property → **stack depth**. 3+ = call today, 2 = this week, 1 = mail only. |
 | **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. Pluggable comps provider seam (mock by default; real RentCast/MLS drops in). |
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
-| **Make the call** | Compliant **click-to-call** via Twilio (manual-dial only — no autodialer). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead (keep-dialing). **Editable call flows** — structured qualification scripts (role, opening, ordered questions, rules, close, Hot/Warm/Cold scoring) the operator follows live; create/edit/set-default in Settings → Call Flows, shown in the Log-Call modal. Seeds a default "DFW Qualification — Sam for Eylon" flow. |
+| **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS via Twilio — template CRUD, manual send, inbound webhook logging, **STOP-keyword auto opt-out** for DNC compliance. |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
@@ -27,7 +27,7 @@ The platform encodes the manual's daily loop end-to-end:
 - **Backend**: FastAPI (Python 3.13), SQLAlchemy 2.0 ORM
 - **Database**: SQLite (dev) / Cloud SQL Postgres (prod) — same ORM layer
 - **Frontend**: Server-rendered Jinja2 + vanilla JS, custom design system
-- **Telephony**: Twilio (click-to-call bridge — operator talks live, not an autodialer)
+- **Telephony**: Quo (formerly OpenPhone — click-to-call into the Quo app, then sync duration / AI summary / transcript via the Quo API) or Twilio (operator-first bridge). Manual-dial only — the operator talks live, never an autodialer.
 - **Deploy**: Docker → Google Cloud Run + Cloud SQL Postgres + Secret Manager
 
 ## Quick Start (Local)
@@ -112,7 +112,12 @@ POST /api/leads/{id}/valuation    — compute ARV + repairs + MAO
 POST /api/import/csv              — upload county CSV
 GET  /api/import/lists            — list source lists
 POST /api/calls/initiate          — click-to-call (compliant)
-POST /api/calls/{id}/log          — log call outcome + auto-followup
+POST /api/calls/{id}/log          — log outcome + call-guide answers + Hot/Warm/Cold score + auto-followup
+GET  /api/calls/provider          — active calling provider (?check=true tests Quo live)
+POST /api/calls/{id}/sync         — pull duration, AI summary, transcript from Quo
+GET  /api/call-flows/guide/{lead_id} — call flow adapted to one property (facts on record, tips, prior answers)
+POST /api/call-flows/score        — Hot/Warm/Cold from answers (rubric + valuation)
+POST /api/leads/{id}/skiptrace    — run skip trace for a lead
 GET  /api/call-flows             — list call flows (filter ?active=true)
 GET  /api/call-flows/default     — the default (or most recent active) flow
 GET  /api/call-flows/{id}        — one flow
@@ -152,7 +157,9 @@ dre-capital/
 │   │   ├── stacking.py       — list stacking engine
 │   │   ├── valuation.py      — ARV/MAO computation
 │   │   ├── skiptrace.py      — skip trace + DNC compliance
-│   │   ├── calling.py        — Twilio click-to-call + follow-ups
+│   │   ├── calling.py        — provider-aware click-to-call (Quo / Twilio) + follow-ups
+│   │   ├── quo.py            — Quo API: line detection, call lookup, AI summary, transcript
+│   │   ├── call_guide.py     — property-aware call guide + Hot/Warm/Cold scoring
 │   │   ├── buyers.py         — buy-box matching
 │   │   └── importer.py       — CSV import + dedup
 │   ├── templates/            — Jinja2 UI pages (incl. whats_new.html — version log + API reference)

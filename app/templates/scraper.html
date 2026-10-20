@@ -81,6 +81,9 @@
           <input type="password" id="source-api-key" class="form-input" placeholder="RentCast API key or other auth token">
           <small class="form-hint">Get a free RentCast API key at <a href="https://app.rentcast.io/api" target="_blank">app.rentcast.io/api</a> (50 calls/mo free)</small>
         </div>
+        <div class="form-group">
+          <label class="form-label"><input type="checkbox" id="source-auto-scrape"> Auto-scrape daily</label>
+        </div>
         <button type="submit" class="btn btn-gold" id="source-save-btn">Save Source</button>
       </form>
     </div>
@@ -149,6 +152,7 @@
 
   async function api(path, opts = {}) {
     const r = await fetch(API + path, opts);
+    if (r.status === 401) { window.location.href = '/login'; throw new Error('Not authenticated'); }
     if (!r.ok) {
       const e = await r.json().catch(() => ({ detail: r.statusText }));
       throw new Error(e.detail || 'Request failed');
@@ -185,10 +189,10 @@
         <div class="source-item directory-item" style="margin-bottom:8px; padding:12px; border:1px solid var(--border); border-radius:8px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
             <div style="flex:1;">
-              <div class="source-name">${esc(s.name)}</div>
-              <div class="source-meta">${esc(s.source_type)}</div>
-              <p style="margin:6px 0; font-size:13px; color:var(--text-muted);">${esc(s.description)}</p>
-              <div style="font-size:12px; color:var(--text-muted);">Example params: <code>${esc(s.search_hint)}</code></div>
+              <div class="source-name">${escHtml(s.name)}</div>
+              <div class="source-meta">${escHtml(s.source_type)}</div>
+              <p style="margin:6px 0; font-size:13px; color:var(--text-muted);">${escHtml(s.description)}</p>
+              <div style="font-size:12px; color:var(--text-muted);">Example params: <code>${escHtml(s.search_hint)}</code></div>
             </div>
             <button class="btn btn-sm btn-gold" onclick="addFromDirectory(${i})">+ Add</button>
           </div>
@@ -197,7 +201,7 @@
       // Store directory data for addFromDirectory
       window._directory = dir;
     } catch (e) {
-      document.getElementById('directory-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+      document.getElementById('directory-list').innerHTML = `<p class="text-danger">Error: ${escHtml(e.message)}</p>`;
     }
   }
 
@@ -237,8 +241,8 @@
         <div class="source-item" data-id="${s.id}">
           <div class="source-header">
             <div>
-              <div class="source-name">${esc(s.name)}</div>
-              <div class="source-meta">${esc(s.source_type.replace('_',' '))}${s.state ? ' · '+esc(s.state) : ''}${s.county ? ' · '+esc(s.county) : ''}</div>
+              <div class="source-name">${escHtml(s.name)}</div>
+              <div class="source-meta">${escHtml(s.source_type.replace('_',' '))}${s.state ? ' · '+escHtml(s.state) : ''}${s.county ? ' · '+escHtml(s.county) : ''}</div>
             </div>
             <div class="source-actions">
               <button class="btn btn-sm btn-gold" onclick="runScrape('${s.id}')" ${!s.active ? 'disabled' : ''}>Scrape</button>
@@ -246,11 +250,11 @@
               <button class="btn btn-sm btn-ghost" onclick="deleteSource('${s.id}')">Del</button>
             </div>
           </div>
-          <div class="source-url">${esc(s.url)}</div>
+          <div class="source-url">${escHtml(s.url)}</div>
         </div>
       `).join('');
     } catch (e) {
-      document.getElementById('sources-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+      document.getElementById('sources-list').innerHTML = `<p class="text-danger">Error: ${escHtml(e.message)}</p>`;
     }
   }
 
@@ -280,6 +284,7 @@
     document.getElementById('source-county').value = s.county || '';
     document.getElementById('source-params').value = s.search_params || '';
     document.getElementById('source-api-key').value = '';
+    document.getElementById('source-auto-scrape').checked = !!s.auto_scrape;
   }
 
   async function deleteSource(id) {
@@ -306,6 +311,7 @@
       county: document.getElementById('source-county').value || null,
       search_params: document.getElementById('source-params').value || null,
       api_key: document.getElementById('source-api-key').value || null,
+      auto_scrape: document.getElementById('source-auto-scrape').checked,
     };
     try {
       if (id) {
@@ -358,18 +364,18 @@
         return `
           <div class="job-item" data-id="${j.id}" onclick="showResults('${j.id}')" style="cursor:pointer; padding:10px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px;">
             <div class="job-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <span class="badge ${statusClass}">${esc(j.status)}</span>
+              <span class="badge ${statusClass}">${escHtml(j.status)}</span>
               <span class="job-date" style="font-size:12px; color:var(--text-muted);">${date}</span>
             </div>
             <div class="job-stats" style="font-size:13px;">
               Found: ${j.total_found} · Imported: ${j.imported} · Skipped: ${j.skipped}
             </div>
-            ${j.error_message ? `<div class="job-error" style="margin-top:6px; padding:6px; background:rgba(220,53,69,0.1); border-radius:4px; font-size:12px; color:#dc3545;">${esc(j.error_message)}</div>` : ''}
+            ${j.error_message ? `<div class="job-error" style="margin-top:6px; padding:6px; background:rgba(220,53,69,0.1); border-radius:4px; font-size:12px; color:#dc3545;">${escHtml(j.error_message)}</div>` : ''}
           </div>
         `;
       }).join('');
     } catch (e) {
-      document.getElementById('jobs-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+      document.getElementById('jobs-list').innerHTML = `<p class="text-danger">Error: ${escHtml(e.message)}</p>`;
     }
   }
 
@@ -394,7 +400,7 @@
       // LLM summary
       if (job.llm_summary) {
         const sumEl = document.getElementById('llm-summary');
-        sumEl.innerHTML = '<strong>🤖 AI Summary:</strong> ' + esc(job.llm_summary);
+        sumEl.innerHTML = '<strong>🤖 AI Summary:</strong> ' + escHtml(job.llm_summary);
         sumEl.style.display = '';
       }
 
@@ -427,17 +433,17 @@
             </div>
             <div class="result-body" style="flex:1;">
               <div class="result-header" style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
-                <strong>${esc(addr)}</strong>
+                <strong>${escHtml(addr)}</strong>
                 ${imported} ${absentee} ${llc}
               </div>
-              <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${esc(owner)} · ${esc(details || '')}</div>
-              ${r.llm_analysis ? `<div class="result-analysis" style="margin-top:6px; padding:6px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px;">🤖 ${esc(r.llm_analysis)}</div>` : ''}
+              <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${escHtml(owner)} · ${escHtml(details || '')}</div>
+              ${r.llm_analysis ? `<div class="result-analysis" style="margin-top:6px; padding:6px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px;">🤖 ${escHtml(r.llm_analysis)}</div>` : ''}
             </div>
           </div>
         `;
       }).join('');
     } catch (e) {
-      document.getElementById('results-list').innerHTML = `<p class="text-danger">Error: ${esc(e.message)}</p>`;
+      document.getElementById('results-list').innerHTML = `<p class="text-danger">Error: ${escHtml(e.message)}</p>`;
     }
   }
 
@@ -481,14 +487,6 @@
     }
     btn.disabled = false;
     btn.textContent = 'Import';
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────
-  function esc(s) {
-    if (s == null) return '';
-    const d = document.createElement('div');
-    d.textContent = String(s);
-    return d.innerHTML;
   }
 
   // Expose to inline handlers

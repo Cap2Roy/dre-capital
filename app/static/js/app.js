@@ -50,6 +50,18 @@ const API = {
   },
 };
 
+/** Escape any API-provided string before it goes into innerHTML / template literals.
+ *  Never put user data inside inline onclick='...' strings — pass IDs only. */
+function escHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+/** "City, ST" without "null, null" when parts are missing. */
+function fmtCityState(city, state) {
+  return [city, state].filter(Boolean).map(escHtml).join(", ");
+}
+
 function fmtMoney(n) {
   if (n == null) return "—";
   return "$" + Math.round(n).toLocaleString("en-US");
@@ -95,8 +107,10 @@ function statusBadge(status) {
     warm: ["badge-warning", "Warm"], under_contract: ["badge-success", "Under Contract"],
     assigned: ["badge-success", "Assigned"], closed: ["badge-success", "Closed"],
     dead: ["badge-danger", "Dead"],
+    pending: ["badge-warning", "Pending"], signed: ["badge-success", "Signed"],
+    fallen: ["badge-danger", "Fallen Through"],
   };
-  const [cls, label] = map[status] || ["badge-neutral", status];
+  const [cls, label] = map[status] || ["badge-neutral", escHtml(status)];
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
@@ -108,11 +122,11 @@ function toast(msg, type = "") {
   setTimeout(() => el.remove(), 3500);
 }
 
-function openModal(title, bodyHtml, footerHtml = "") {
+function openModal(title, bodyHtml, footerHtml = "", opts = {}) {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal">
+    <div class="modal${opts.wide ? " modal-wide" : ""}">
       <div class="modal-header">
         <h3>${title}</h3>
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
@@ -121,7 +135,8 @@ function openModal(title, bodyHtml, footerHtml = "") {
       ${footerHtml ? `<div class="modal-footer">${footerHtml}</div>` : ""}
     </div>`;
   document.body.appendChild(overlay);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  // Wide modals hold in-progress call notes — don't drop them on a stray backdrop click.
+  if (!opts.wide) overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
   return overlay;
 }
 
@@ -135,12 +150,17 @@ async function doLogout() {
   window.location.href = "/login";
 }
 
-// Active nav highlight
+// Active nav highlight + call-queue count badge on every page
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
   if (page) {
     document.querySelectorAll(".sidebar-nav a").forEach(a => {
       if (a.dataset.page === page) a.classList.add("active");
     });
+  }
+  const badge = document.getElementById("nav-queue-count");
+  if (badge && page !== "login") {
+    fetch("/api/dashboard/queue").then(r => r.ok ? r.json() : null)
+      .then(q => { if (q) badge.textContent = q.count; }).catch(() => {});
   }
 });

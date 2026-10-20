@@ -33,8 +33,6 @@
 
 {% block scripts %}
 <script>
-const statusColors = {pending:"badge-warning", signed:"badge-info", assigned:"badge-success", closed:"badge-success", fallen:"badge-danger"};
-
 async function loadContracts() {
   try {
     const contracts = await API.get("/api/contracts");
@@ -42,18 +40,13 @@ async function loadContracts() {
     if (contracts.length === 0) {
       body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">✎</div>No contracts yet. Get a verbal yes, then create one from the lead detail page.</div></td></tr>';
     } else {
-      // Enrich with lead data
-      const enriched = await Promise.all(contracts.map(async c => {
-        // We need lead address; fetch via a lightweight approach
-        return c;
-      }));
       body.innerHTML = contracts.map(c => `<tr>
-        <td class="font-semi">Lead ${c.lead_id ? `<a href="/leads/${c.lead_id}">→ view</a>` : "—"}</td>
+        <td class="font-semi"><a href="/leads/${c.lead_id}">${escHtml(c.property_address) || "View lead →"}</a></td>
         <td class="col-num font-semi">${fmtMoney(c.contract_price)}</td>
         <td class="col-num">${fmtMoney(c.assignment_fee)}</td>
         <td class="col-num">${c.buyer_price ? fmtMoney(c.buyer_price) : "—"}</td>
-        <td>${c.buyer_id ? "Assigned" : "Unassigned"}</td>
-        <td><span class="badge ${statusColors[c.status] || "badge-neutral"}">${c.status}</span></td>
+        <td>${c.buyer_id ? escHtml(c.buyer_name) || "Assigned" : '<span class="text-muted">Unassigned</span>'}</td>
+        <td>${statusBadge(c.status)}</td>
         <td class="text-sm">${fmtDate(c.signed_at)}</td>
         <td>${c.disclosure_sent ? '<span class="badge badge-success">Sent</span>' : '<span class="badge badge-danger">Not sent</span>'}</td>
         <td>

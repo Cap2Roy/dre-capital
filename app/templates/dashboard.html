@@ -93,7 +93,6 @@
     document.getElementById("bar-1").textContent = stats.stack_mail_only;
 
     const queue = await API.get("/api/dashboard/queue");
-    document.getElementById("nav-queue-count").textContent = queue.count;
     const top = queue.queue.slice(0, 5);
     const el = document.getElementById("queue-preview");
     if (top.length === 0) {
@@ -103,8 +102,8 @@
         top.map((l, i) => `<tr onclick="location.href='/leads/${l.id}'">
           <td class="col-mono">${i + 1}</td>
           <td>${stackBadge(l.stack_depth)}</td>
-          <td>${l.address}<br><span class="text-xs text-muted">${l.city}, ${l.state}</span></td>
-          <td>${l.owner}</td>
+          <td>${escHtml(l.address)}<br><span class="text-xs text-muted">${fmtCityState(l.city, l.state)}</span></td>
+          <td>${escHtml(l.owner)}</td>
           <td>${tierLabel(l.stack_depth)}</td>
           <td class="col-mono">${l.call_count}</td>
         </tr>`).join("") + `</tbody></table>`;

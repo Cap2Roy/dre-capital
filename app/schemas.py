@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class ORMBase(BaseModel):
@@ -64,10 +64,32 @@ class CallOut(ORMBase):
     id: str
     outcome: str
     direction: str
+    provider: str = "dry-run"
     attempt_count: int
     duration_seconds: Optional[int] = None
     notes: Optional[str] = None
+    call_flow_id: Optional[str] = None
+    answers: dict[str, str] = {}
+    lead_score: Optional[str] = None
+    ai_summary: Optional[str] = None
+    transcript: Optional[str] = None
     created_at: datetime
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def _parse_answers(cls, v):
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v) or {}
+            except (ValueError, TypeError):
+                return {}
+        return v or {}
+
+
+class CallInitiateOut(CallOut):
+    """Initiate response: ``dial_url`` is the tel: link for the Quo app (Quo only)."""
+    dial_url: Optional[str] = None
 
 class FollowUpOut(ORMBase):
     id: str
@@ -77,12 +99,29 @@ class FollowUpOut(ORMBase):
 
 class ContractOut(ORMBase):
     id: str
+    lead_id: str
+    buyer_id: Optional[str] = None
+    property_address: Optional[str] = None
+    buyer_name: Optional[str] = None
     contract_price: float
     assignment_fee: float
     buyer_price: Optional[float] = None
     status: str
     signed_at: Optional[datetime] = None
     disclosure_sent: bool
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _resolve_related(cls, data, handler):
+        """Resolve address/buyer name from the ORM relationships."""
+        out = handler(data)
+        lead = getattr(data, "lead", None)
+        buyer = getattr(data, "buyer", None)
+        if out.property_address is None and lead is not None:
+            out.property_address = lead.property_address
+        if out.buyer_name is None and buyer is not None:
+            out.buyer_name = buyer.name
+        return out
 
 class LeadOut(ORMBase):
     id: str
@@ -180,13 +219,22 @@ class ValuationRequest(BaseModel):
 
 class CallInitiateRequest(BaseModel):
     phone_id: str
-    operator_number: str  # the sales rep's phone
+    operator_number: Optional[str] = None  # required only for the Twilio bridge
 
 
 class CallLogRequest(BaseModel):
     outcome: str
     notes: Optional[str] = None
     duration_seconds: Optional[int] = None
+    call_flow_id: Optional[str] = None
+    answers: Optional[dict[str, str]] = None  # call-guide answers keyed by question index
+    lead_score: Optional[str] = None          # hot | warm | cold; blank = compute from answers
+
+
+class CallScoreRequest(BaseModel):
+    lead_id: str
+    flow_id: Optional[str] = None
+    answers: dict[str, str] = {}
 
 
 # ── Buyers ──────────────────────────────────────────────────────────────────
@@ -294,6 +342,18 @@ class ScrapeSourceCreate(BaseModel):
     search_params: Optional[str] = None  # JSON string
     api_key: Optional[str] = None
     auto_scrape: bool = False
+
+
+class ScrapeSourceUpdate(BaseModel):
+    """Partial update: only fields present in the request body are applied."""
+    name: Optional[str] = None
+    url: Optional[str] = None
+    source_type: Optional[str] = None
+    state: Optional[str] = None
+    county: Optional[str] = None
+    search_params: Optional[str] = None
+    api_key: Optional[str] = None
+    auto_scrape: Optional[bool] = None
 
 
 class ScrapeSourceOut(ORMBase):

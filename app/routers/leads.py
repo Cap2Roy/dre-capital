@@ -132,6 +132,19 @@ def add_followup(lead_id: str, payload: FollowUpCreate, db: Session = Depends(ge
     return lead
 
 
+@router.post("/{lead_id}/skiptrace", response_model=LeadOut)
+def skiptrace_lead(lead_id: str, db: Session = Depends(get_db)):
+    """Skip trace the owner of record; numbers are DNC-scrubbed by the service."""
+    from app.services.skiptrace import skip_trace_lead
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    skip_trace_lead(db, lead)
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
 @router.get("/{lead_id}/timeline")
 def lead_timeline(lead_id: str, db: Session = Depends(get_db)):
     """Unified timeline: calls + followups + valuations + contracts in chrono order."""

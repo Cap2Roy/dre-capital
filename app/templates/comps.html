@@ -47,8 +47,8 @@ async function loadComps() {
       body.innerHTML = leads.map(l => {
         const v = l.valuations[0];
         return `<tr onclick="location.href='/leads/${l.id}'">
-          <td><div class="font-semi">${l.property_address}</div><div class="text-xs text-muted">${l.property_city}, ${l.property_state}</div></td>
-          <td>${l.owner_name}</td>
+          <td><div class="font-semi">${escHtml(l.property_address)}</div><div class="text-xs text-muted">${fmtCityState(l.property_city, l.property_state)}</div></td>
+          <td>${escHtml(l.owner_name)}</td>
           <td>${stackBadge(l.stack_depth)}</td>
           <td>${statusBadge(l.status)}</td>
           <td class="col-num font-semi">${v ? fmtMoney(v.arv) : '<span class="text-danger">— comp it</span>'}</td>

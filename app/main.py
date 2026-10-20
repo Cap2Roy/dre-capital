@@ -106,7 +106,7 @@ def _ctx(request: Request) -> dict:
         "current_user": user,
         "user_name": user.name if user else "",
         "user_email": user.email if user else "",
-        "user_initials": " ".join(w[0] for w in (user.name or "").split()[:2]).upper() if user else "",
+        "user_initials": "".join(w[0] for w in (user.name or "").split()[:2]).upper() if user else "",
         "user_role": user.role if user else "",
         "is_admin": user.role == "admin" if user else False,
         "current_version": __version__,
@@ -126,7 +126,7 @@ def page_leads(request: Request):
 
 @app.get("/leads/{lead_id}", response_class=HTMLResponse)
 def page_lead_detail(request: Request, lead_id: str):
-    return templates.TemplateResponse("lead_detail.html", {**_ctx(request), "page": "lead_detail", "lead_id": lead_id})
+    return templates.TemplateResponse("lead_detail.html", {**_ctx(request), "page": "leads", "lead_id": lead_id})
 
 
 @app.get("/queue", response_class=HTMLResponse)

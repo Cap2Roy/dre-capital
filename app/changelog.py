@@ -19,9 +19,40 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.1.0"
+CURRENT_VERSION = "2.2.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.2.0",
+        "date": "2026-10-21",
+        "title": "Quo calling + property-aware guided calls",
+        "sections": {
+            "Added": [
+                "Quo (formerly OpenPhone) as a calling provider: ☎ Call opens the number in the Quo app (tel: link) — still manual-dial — and 'Sync from Quo' pulls the call's duration, Quo AI summary + next steps, and transcript into the CRM.",
+                "Settings → Calling & API Keys → Quo card: provider (Auto / Quo / Twilio), API key (masked, or QUO_API_KEY env), phone-number ID auto-detection, live 'Test Connection'.",
+                "Guided Call: the call flow adapted to each property — placeholders filled from the lead, every question annotated with what's on record (county data, list memberships, taxes owed, valuation kept internal) plus how to ask it (Confirm / Ask gently / Optional).",
+                "Answers from earlier calls pre-fill the matching questions so the seller is never asked twice; the close line picks up the agreed callback time.",
+                "Live Hot/Warm/Cold scoring from the answers using the flow's rubric (asking price checked against ARV); operator can override. Score + answers are saved on the call.",
+                "Script quick-exits: 'Never inquired / not interested', 'Wrong person', and 'Stop calling → Do Not Call' (opts the number out).",
+                "Call history shows score, provider, and expandable answers / AI summary / transcript; per-call 'Sync' for Quo calls.",
+                "API: GET /api/calls/provider, POST /api/calls/{id}/sync, GET /api/call-flows/guide/{lead_id}, POST /api/call-flows/score, POST /api/leads/{id}/skiptrace.",
+            ],
+            "Fixed": [
+                "Add Lead always failed with a 500 (owner_email / rehab_level not accepted by the lead service).",
+                "Lead detail and Comps showed the oldest valuation/contract after a re-value — now newest first.",
+                "Contracts page couldn't link to the lead and always said 'Unassigned' — contracts now include lead, address, and buyer.",
+                "Call-flow editor put every question on one line (literal \\n) and saved multi-line questions as one.",
+                "Stored XSS: user, lead, buyer, and call-note text is now escaped everywhere it's rendered; user data no longer goes into inline onclick handlers.",
+                "'Skip Trace Now' / 'Re-trace' did nothing — now run the skip trace.",
+                "Editing a scrape source silently turned off its daily auto-scrape.",
+                "'Mark Signed' never recorded the signed date.",
+                "A blank contract price created a $0 contract.",
+                "Logging a call erased the provider-synced duration when the duration field was left blank.",
+                "Leads page: MI missing from the state filter, 'dead' missing from the status filter, and the table never loaded if the queue count failed.",
+                "Call-queue badge showed '—' on most pages; Leads nav not highlighted on lead detail; avatar initials rendered as 'A A'; contract statuses pending/signed/fallen showed as raw text.",
+            ],
+        },
+    },
     {
         "version": "2.1.0",
         "date": "2026-10-07",

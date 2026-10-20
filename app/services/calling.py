@@ -1,16 +1,20 @@
-"""Click-to-call via Twilio.
+"""Click-to-call via Quo (formerly OpenPhone) or Twilio.
 
 Compliance note: this is a **manual-dial** system.  The operator clicks once
 per call; there is no autodialer, no preview/power dial, and no prerecorded
-messages.  Twilio connects the operator's phone to the seller's number — the
-operator is on the line and talks live.  This satisfies the manual's hard
-rule: "Manual-dial. No autodialer, no prerecorded messages."
+messages.  The operator is on the line and talks live.  This satisfies the
+manual's hard rule: "Manual-dial. No autodialer, no prerecorded messages."
 
-If Twilio credentials are absent, ``initiate_call`` returns a dry-run payload
-so the UI and call-logging pipeline still work end-to-end in dev.
+Providers (see ``get_calling_provider``):
+- ``quo``: the UI hands the number to the Quo app (``tel:`` link) and the
+  operator presses Call there; results sync back via ``services.quo``.
+- ``twilio``: Twilio rings the operator, then bridges to the seller.
+- ``dry-run``: nothing configured — the call is logged so the pipeline still
+  works end-to-end in dev.
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -24,33 +28,31 @@ def initiate_call(
     db: Session,
     lead: Lead,
     phone: Phone,
-    operator_number: str,
+    operator_number: Optional[str] = None,
     caller_id: Optional[str] = None,
 ) -> Call:
-    """Initiate a compliant manual click-to-call.
+    """Start a compliant manual call through the active provider.
 
-    Uses Twilio's "connect operator to seller" pattern: Twilio first rings
-    the operator; when they answer, it bridges to the seller.  The operator
-    is a live participant — not an autodialer.
-
-    Raises ValueError if the phone is DNC-flagged or opted out.
+    Raises ValueError if the phone is DNC-flagged / opted out, or if Twilio is
+    active and no operator number was given (Twilio must ring the operator first).
     """
     if not is_callable(phone):
         raise ValueError(
             f"Phone {phone.number} is DNC-flagged or opted out. Mail only."
         )
 
-    settings = get_settings()
+    from app.services.settings import get_calling_provider, get_twilio_config
+    provider = get_calling_provider(db)
     call_sid: Optional[str] = None
 
-    # Read Twilio config from DB settings, fall back to env vars
-    from app.services.settings import get_twilio_config
-    twilio_cfg = get_twilio_config(db)
-    twilio_sid = twilio_cfg["account_sid"] or settings.twilio_account_sid
-    twilio_token = twilio_cfg["auth_token"] or settings.twilio_auth_token
-    twilio_from = twilio_cfg["from_number"] or settings.twilio_from_number
-
-    if twilio_sid and twilio_token and twilio_from:
+    if provider == "twilio":
+        if not operator_number:
+            raise ValueError("Operator number is required to bridge a Twilio call.")
+        settings = get_settings()
+        twilio_cfg = get_twilio_config(db)
+        twilio_sid = twilio_cfg["account_sid"] or settings.twilio_account_sid
+        twilio_token = twilio_cfg["auth_token"] or settings.twilio_auth_token
+        twilio_from = twilio_cfg["from_number"] or settings.twilio_from_number
         try:
             from twilio.rest import Client
             client = Client(twilio_sid, twilio_token)
@@ -71,8 +73,8 @@ def initiate_call(
             # Don't pretend the call connected: surface the failure so the
             # router returns an error and no "successful" call is committed.
             raise RuntimeError(f"Twilio call failed: {exc}") from exc
-    # Dev dry-run: no call_sid, call logged for the pipeline.
-
+    # Quo: the operator dials in the Quo app; the Quo call ID arrives on sync.
+    # Dry-run: no provider — the call is logged for the pipeline only.
     # Attempt count = prior calls on this lead + 1
     from sqlalchemy import select, func as sqlfunc
     prior = db.execute(
@@ -87,6 +89,7 @@ def initiate_call(
         outcome=CallOutcome.NO_ANSWER,  # updated by operator after the call
         attempt_count=prior + 1,
         call_sid=call_sid,
+        provider=provider,
     )
     db.add(call)
     db.flush()
@@ -99,17 +102,32 @@ def log_call_outcome(
     outcome: CallOutcome,
     notes: str | None = None,
     duration_seconds: int | None = None,
+    call_flow_id: str | None = None,
+    answers: dict[str, str] | None = None,
+    lead_score: str | None = None,
 ) -> Call:
     """Update a call with its outcome and set follow-up per the manual.
 
     Most deals close after touch 5+, so every non-yes outcome schedules a
-    follow-up.  DNC requests immediately opt out the phone.
+    follow-up.  DNC requests immediately opt out the phone.  ``answers`` are
+    the call-guide responses keyed by question index; ``lead_score`` is the
+    Hot/Warm/Cold rubric result.
     """
     from datetime import datetime, timedelta
 
     call.outcome = outcome
     call.notes = notes
-    call.duration_seconds = duration_seconds
+    # A provider sync may already hold the real duration — only overwrite it
+    # when the operator actually entered one.
+    if duration_seconds is not None:
+        call.duration_seconds = duration_seconds
+    if call_flow_id is not None:
+        call.call_flow_id = call_flow_id
+    if answers is not None:
+        cleaned = {k: v.strip() for k, v in answers.items() if v and v.strip()}
+        call.answers = json.dumps(cleaned) if cleaned else None
+    if lead_score is not None:
+        call.lead_score = lead_score or None
     db.flush()
 
     # Schedule follow-up for non-final outcomes

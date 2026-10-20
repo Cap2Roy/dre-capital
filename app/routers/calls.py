@@ -1,4 +1,4 @@
-"""Calls router: click-to-call + outcome logging + Twilio status callback."""
+"""Calls router: click-to-call (Quo / Twilio) + outcome logging + provider sync."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Call, CallOutcome, Lead, Phone
-from app.schemas import CallInitiateRequest, CallLogRequest, CallOut, NoAnswerSmsRequest
+from app.models import Call, CallFlow, CallOutcome, Lead, Phone
+from app.schemas import CallInitiateOut, CallInitiateRequest, CallLogRequest, CallOut, NoAnswerSmsRequest
 from app.services.calling import initiate_call, log_call_outcome
 from app.services.messaging import send_sms
 from app.services.queue import get_next_lead_to_dial
@@ -15,13 +15,30 @@ from app.services.skiptrace import is_callable
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 
+_SCORES = {"hot", "warm", "cold"}
 
-@router.post("/initiate", response_model=CallOut)
-def start_call(payload: CallInitiateRequest, db: Session = Depends(get_db)):
+
+@router.get("/provider")
+def calling_provider(check: bool = False, db: Session = Depends(get_db)):
+    """Active calling provider + the default operator number (for the Twilio bridge
+    prompt).  ``check=true`` also tests the Quo connection live."""
+    from app.services.settings import get_calling_provider, get_setting
+    provider = get_calling_provider(db)
+    out: dict = {"provider": provider, "operator_number": get_setting(db, "operator_number") or ""}
+    if check and provider == "quo":
+        from app.services.quo import connection_status
+        out["quo"] = connection_status(db)
+        db.commit()  # persist an auto-detected line
+    return out
+
+
+@router.post("/initiate", response_model=CallInitiateOut)
+def start_call(payload: CallInitiateRequest, request: Request, db: Session = Depends(get_db)):
     """Initiate a compliant manual click-to-call.
 
-    The operator clicks once per call; Twilio bridges operator → seller.
-    No autodialer, no prerecorded messages.
+    Quo: returns ``dial_url`` (tel: link) — the operator presses Call in the Quo
+    app.  Twilio: rings the operator, then bridges to the seller.  No
+    autodialer, no prerecorded messages.
     """
     phone = db.get(Phone, payload.phone_id)
     if not phone:
@@ -31,15 +48,26 @@ def start_call(payload: CallInitiateRequest, db: Session = Depends(get_db)):
         raise HTTPException(404, "Lead not found")
     if not is_callable(phone):
         raise HTTPException(403, "Phone is DNC-flagged or opted out. Mail only.")
-    call = initiate_call(db, lead, phone, operator_number=payload.operator_number)
+    user = getattr(request.state, "user", None)
+    try:
+        call = initiate_call(db, lead, phone, operator_number=payload.operator_number,
+                             caller_id=user.id if user else None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
     db.commit()
     db.refresh(call)
-    return call
+    out = CallInitiateOut.model_validate(call)
+    if call.provider == "quo":
+        from app.services.quo import dial_url
+        out.dial_url = dial_url(phone.number)
+    return out
 
 
 @router.post("/{call_id}/log", response_model=CallOut)
 def log_outcome(call_id: str, payload: CallLogRequest, db: Session = Depends(get_db)):
-    """Log the outcome of a call and auto-schedule follow-up per the manual."""
+    """Log the outcome (+ call-guide answers and score) and auto-schedule follow-up."""
     call = db.get(Call, call_id)
     if not call:
         raise HTTPException(404, "Call not found")
@@ -47,11 +75,43 @@ def log_outcome(call_id: str, payload: CallLogRequest, db: Session = Depends(get
         outcome = CallOutcome(payload.outcome)
     except ValueError:
         raise HTTPException(400, f"Invalid outcome. Valid: {[e.value for e in CallOutcome]}")
-    call = log_call_outcome(db, call, outcome, notes=payload.notes,
-                           duration_seconds=payload.duration_seconds)
+    score = (payload.lead_score or "").strip().lower() or None
+    if score is not None and score not in _SCORES:
+        raise HTTPException(400, "lead_score must be hot, warm, or cold")
+    flow = db.get(CallFlow, payload.call_flow_id) if payload.call_flow_id else None
+    if payload.call_flow_id and flow is None:
+        raise HTTPException(404, "Call flow not found")
+    if score is None and payload.answers and flow is not None:
+        from app.services.call_guide import score_answers
+        score = score_answers(db, call.lead, flow, payload.answers)["score"]
+    call = log_call_outcome(
+        db, call, outcome,
+        notes=payload.notes,
+        duration_seconds=payload.duration_seconds,
+        call_flow_id=payload.call_flow_id,
+        answers=payload.answers,
+        lead_score=score,
+    )
     db.commit()
     db.refresh(call)
     return call
+
+
+@router.post("/{call_id}/sync")
+def sync_from_provider(call_id: str, db: Session = Depends(get_db)):
+    """Pull duration, AI summary, and transcript for a Quo call after hang-up."""
+    call = db.get(Call, call_id)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    if call.provider != "quo":
+        raise HTTPException(400, f"Sync is only available for Quo calls (this call used {call.provider}).")
+    from app.services.quo import QuoError, sync_call
+    try:
+        result = sync_call(db, call)
+    except QuoError as exc:
+        raise HTTPException(502, str(exc))
+    db.commit()
+    return result
 
 
 @router.post("/twilio-status")

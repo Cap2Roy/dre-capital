@@ -7,19 +7,28 @@
 {% block scripts %}
 <script>
 const LEAD_ID = "{{ lead_id }}";
+let _lead = null;
 
 async function loadLead() {
   try {
     const lead = await API.get(`/api/leads/${LEAD_ID}`);
     const timeline = await API.get(`/api/leads/${LEAD_ID}/timeline`);
+    _lead = lead;
     document.getElementById("lead-detail").innerHTML = renderLead(lead, timeline);
   } catch (e) {
-    document.getElementById("lead-detail").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${e.message}</div>`;
+    document.getElementById("lead-detail").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${escHtml(e.message)}</div>`;
   }
 }
 
+const PROVIDER_LABELS = { quo: "Quo", twilio: "Twilio", "dry-run": "Dry-run" };
+function scoreBadge(s) {
+  const map = { hot: ["badge-danger", "🔥 Hot"], warm: ["badge-warning", "Warm"], cold: ["badge-info", "Cold"] };
+  if (!s || !map[s]) return '<span class="text-muted">—</span>';
+  return `<span class="badge ${map[s][0]}">${map[s][1]}</span>`;
+}
+
 function renderLead(l, tl) {
-  const valuation = l.valuations[0];
+  const valuation = l.valuations[0];   // newest first
   const contract = l.contracts[0];
   return `
   <div class="page-header">
@@ -30,8 +39,8 @@ function renderLead(l, tl) {
         ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""}
         ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}
       </div>
-      <div class="page-title mt-4">${l.property_address}</div>
-      <div class="page-subtitle">${l.property_city || ""}, ${l.property_state || ""} ${l.property_zip || ""}</div>
+      <div class="page-title mt-4">${escHtml(l.property_address)}</div>
+      <div class="page-subtitle">${fmtCityState(l.property_city, l.property_state)} ${escHtml(l.property_zip || "")}</div>
     </div>
     <div class="flex gap-2">
       <a href="/queue" class="btn btn-outline">← Back to Queue</a>
@@ -44,8 +53,8 @@ function renderLead(l, tl) {
         <div class="card-header">Owner of Record</div>
         <div class="card-body">
           <table style="width:100%; font-size:var(--fs-base)">
-            <tr><td class="text-muted" style="padding:4px 0; width:130px">Owner</td><td class="font-semi">${l.owner_name || "—"}</td></tr>
-            <tr><td class="text-muted" style="padding:4px 0">Mailing Address</td><td>${l.mailing_address || l.property_address}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0; width:130px">Owner</td><td class="font-semi">${escHtml(l.owner_name) || "—"}</td></tr>
+            <tr><td class="text-muted" style="padding:4px 0">Mailing Address</td><td>${escHtml(l.mailing_address || l.property_address)}</td></tr>
             <tr><td class="text-muted" style="padding:4px 0">Property</td><td>${l.beds || "?"} bed / ${l.baths || "?"} bath / ${l.sqft ? l.sqft.toLocaleString() : "?"} sqft</td></tr>
             <tr><td class="text-muted" style="padding:4px 0">Year Built</td><td>${l.year_built || "—"}</td></tr>
             <tr><td class="text-muted" style="padding:4px 0">Assessed Value</td><td class="font-semi">${fmtMoney(l.assessed_value)}</td></tr>
@@ -57,10 +66,10 @@ function renderLead(l, tl) {
       <div class="card mb-4">
         <div class="card-header">Skip Traced Phones ${l.phones.length ? `<span class="badge badge-info">${l.phones.length} found</span>` : ""}</div>
         <div class="card-body">
-          ${l.phones.length === 0 ? '<div class="empty-state">No phones traced yet. <button class="btn btn-primary btn-sm" onclick="skipTrace()">Skip Trace Now</button></div>' :
+          ${l.phones.length === 0 ? '<div class="empty-state">No phones traced yet. <button class="btn btn-primary btn-sm" onclick="skipTrace(this)">Skip Trace Now</button></div>' :
             l.phones.map(p => `
               <div class="phone-row ${p.dnc_flagged ? "dnc" : ""} ${p.opted_out ? "opted" : ""}">
-                <span class="number">${fmtPhone(p.number)}</span>
+                <span class="number">${fmtPhone(escHtml(p.number))}</span>
                 ${p.dnc_flagged ? '<span class="dnc-flag">⚠ DNC — Mail Only</span>' : ""}
                 ${p.opted_out ? '<span class="badge badge-danger">Opted Out</span>' : ""}
                 ${p.quality === "good" ? '<span class="badge badge-success">Good</span>' : ""}
@@ -68,7 +77,7 @@ function renderLead(l, tl) {
                 ${!p.dnc_flagged && !p.opted_out ? `<button class="btn-call" onclick="initiateCall('${p.id}')">☎ Call</button>` : ""}
               </div>`).join("")
           }
-          ${l.phones.length > 0 ? '<button class="btn btn-outline btn-sm mt-4" onclick="skipTrace()">Re-trace</button>' : ""}
+          ${l.phones.length > 0 ? '<button class="btn btn-outline btn-sm mt-4" onclick="skipTrace(this)">Re-trace</button>' : ""}
         </div>
       </div>
 
@@ -76,13 +85,16 @@ function renderLead(l, tl) {
         <div class="card-header">Call History (${l.calls.length})</div>
         <div class="card-body">
           ${l.calls.length === 0 ? '<div class="empty-state text-sm">No calls yet.</div>' :
-            `<table class="data-table"><thead><tr><th>#</th><th>Outcome</th><th>Duration</th><th>Date</th></tr></thead><tbody>` +
+            `<table class="data-table"><thead><tr><th>#</th><th>Outcome</th><th>Score</th><th>Via</th><th>Duration</th><th>Date</th><th></th></tr></thead><tbody>` +
             l.calls.map(c => `<tr>
               <td class="col-mono">${c.attempt_count}</td>
               <td>${callOutcomeBadge(c.outcome)}</td>
+              <td>${scoreBadge(c.lead_score)}</td>
+              <td class="text-sm">${PROVIDER_LABELS[c.provider] || escHtml(c.provider)}</td>
               <td class="col-mono">${c.duration_seconds ? c.duration_seconds + "s" : "—"}</td>
               <td class="text-sm">${fmtDateTime(c.created_at)}</td>
-            </tr>`).join("") + `</tbody></table>`
+              <td>${c.provider === "quo" ? `<button class="btn btn-outline btn-sm" onclick="syncCall('${c.id}', this)">Sync</button>` : ""}</td>
+            </tr>${callDetailRow(c)}`).join("") + `</tbody></table>`
           }
         </div>
       </div>
@@ -98,7 +110,7 @@ function renderLead(l, tl) {
             <tr><td class="text-muted">Fee</td><td class="text-right">− ${fmtMoney(valuation.fee)}</td></tr>
             <tr style="border-top:2px solid var(--border-2)"><td class="font-bold" style="padding-top:8px">MAO</td><td class="text-right font-bold" style="padding-top:8px; color:var(--success); font-size:var(--fs-lg)">${fmtMoney(valuation.mao)}</td></tr>
           </table>
-          <div class="text-xs text-muted mt-4">MAO = (ARV × 0.70) − Repairs − Fee. ${valuation.comp_count} comps used.</div>
+          <div class="text-xs text-muted mt-4">MAO = (ARV × 0.70) − Repairs − Fee. ${valuation.comp_count} comps used.${valuation.comps_is_mock ? " <strong>Mock comps.</strong>" : ""}</div>
           <button class="btn btn-outline btn-sm mt-4" onclick="valuationModal()">Re-value</button>
         ` : `
           <div class="empty-state text-sm">No valuation yet. Comp this lead to compute MAO.</div>
@@ -139,7 +151,7 @@ function renderLead(l, tl) {
         <div class="card-body">
           <div class="timeline">
             ${tl.events.length === 0 ? '<div class="empty-state text-sm">No activity yet.</div>' :
-              tl.events.map(e => `<div class="timeline-event ${e.type}">
+              tl.events.map(e => `<div class="timeline-event ${escHtml(e.type)}">
                 <div class="event-time">${fmtDateTime(e.at)}</div>
                 <div class="event-title">${timelineTitle(e)}</div>
                 <div class="event-detail">${timelineDetail(e)}</div>
@@ -152,6 +164,18 @@ function renderLead(l, tl) {
   </div>`;
 }
 
+function callDetailRow(c) {
+  const answered = Object.keys(c.answers || {}).length;
+  if (!c.notes && !c.ai_summary && !c.transcript && !answered) return "";
+  return `<tr><td></td><td colspan="6" style="padding-top:0">
+    <details class="text-sm"><summary class="text-muted" style="cursor:pointer">Details${answered ? ` · ${answered} answers` : ""}${c.ai_summary ? " · AI summary" : ""}${c.transcript ? " · transcript" : ""}</summary>
+      ${c.notes ? `<p class="mt-2"><strong>Notes:</strong> ${escHtml(c.notes)}</p>` : ""}
+      ${answered ? `<ul class="gc-reasons">${Object.entries(c.answers).map(([i, a]) => `<li>Q${Number(i) + 1}: ${escHtml(a)}</li>`).join("")}</ul>` : ""}
+      ${c.ai_summary ? `<div class="mt-2"><strong>Quo AI summary</strong><div class="gc-summary">${escHtml(c.ai_summary)}</div></div>` : ""}
+      ${c.transcript ? `<details class="mt-2"><summary style="cursor:pointer">Transcript</summary><div class="gc-summary">${escHtml(c.transcript)}</div></details>` : ""}
+    </details></td></tr>`;
+}
+
 function callOutcomeBadge(o) {
   const map = {
     no_answer: ["badge-neutral","No Answer"], voicemail: ["badge-info","Voicemail"],
@@ -160,112 +184,284 @@ function callOutcomeBadge(o) {
     offer_sent: ["badge-info","Offer Sent"], verbal_yes: ["badge-success","Verbal Yes"],
     dnc_request: ["badge-danger","DNC Request"],
   };
-  const [cls, label] = map[o] || ["badge-neutral", o];
+  const [cls, label] = map[o] || ["badge-neutral", escHtml(o)];
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
 function timelineTitle(e) {
   const titles = {call: "Call Logged", followup: "Follow-up Scheduled", valuation: "Valuation Computed", contract: "Contract Created"};
-  return titles[e.type] || e.type;
+  return titles[e.type] || escHtml(e.type);
 }
 function timelineDetail(e) {
-  if (e.type === "call") return `${callOutcomeBadge(e.outcome)} · Attempt #${e.attempt}${e.notes ? " — " + e.notes : ""}`;
-  if (e.type === "followup") return `${e.reason || ""} ${e.done ? "✓" : ""}`;
+  if (e.type === "call") return `${callOutcomeBadge(e.outcome)} · Attempt #${e.attempt}${e.notes ? " — " + escHtml(e.notes) : ""}`;
+  if (e.type === "followup") return `${escHtml(e.reason || "")} ${e.done ? "✓" : ""}`;
   if (e.type === "valuation") return `ARV ${fmtMoney(e.arv)} → MAO ${fmtMoney(e.mao)} (repairs ${fmtMoney(e.repairs)})`;
   if (e.type === "contract") return `${statusBadge(e.status)} · ${fmtMoney(e.price)}`;
   return "";
 }
 
-async function skipTrace() {
+async function skipTrace(btn) {
+  if (btn) btn.disabled = true;
   try {
-    // The skip trace runs implicitly when we fetch lead if no phones exist;
-    // here we trigger it via the valuation endpoint which creates comps.
-    // For explicit re-trace, we'd add a dedicated endpoint — for now reload.
-    toast("Skip trace queued (re-open lead to see new numbers)", "success");
-    setTimeout(() => loadLead(), 500);
-  } catch (e) { toast("Error: " + e.message, "error"); }
+    const lead = await API.post(`/api/leads/${LEAD_ID}/skiptrace`);
+    toast(`Skip trace complete — ${lead.phones.length} number(s) on file`, "success");
+    loadLead();
+  } catch (e) {
+    toast("Skip trace failed: " + e.message, "error");
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── Calling (Quo / Twilio / dry-run) ─────────────────────────────
+let _provider = null;
+async function getProvider() {
+  if (!_provider) _provider = await API.get("/api/calls/provider");
+  return _provider;
 }
 
 async function initiateCall(phoneId) {
-  const operatorNum = prompt("Enter your phone number (operator):", "+1");
-  if (!operatorNum) return;
+  let prov;
+  try { prov = await getProvider(); } catch (e) { toast("Error: " + e.message, "error"); return; }
+  const body = { phone_id: phoneId };
+  if (prov.provider === "twilio") {
+    const op = prompt("Your phone number — Twilio rings you first, then connects the seller:", prov.operator_number || "+1");
+    if (!op) return;
+    body.operator_number = op;
+  }
   try {
-    const call = await API.post("/api/calls/initiate", { phone_id: phoneId, operator_number: operatorNum });
-    toast("Call initiated — log outcome after.", "success");
-    openLogCallModal(call.id, phoneId);
+    const call = await API.post("/api/calls/initiate", body);
+    if (call.dial_url) {
+      // Hand the number to the Quo app (registered tel: handler) — operator presses Call there.
+      const a = document.createElement("a");
+      a.href = call.dial_url;
+      a.click();
+      toast("Opening Quo — press Call in the Quo app.", "success");
+    } else if (call.provider === "twilio") {
+      toast("Twilio is ringing your phone — answer to connect.", "success");
+    } else {
+      toast("No calling provider configured — dial manually; the call is logged.", "");
+    }
+    openGuidedCall(call, phoneId);
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 
-let _defaultCallFlow = null;
-async function loadDefaultCallFlow() {
-  if (_defaultCallFlow !== null) return _defaultCallFlow;
+// ── Guided call: the call flow adapted to this property ──────────
+let _guide = null;
+let _activeCall = null;
+let _scoreTimer = null;
+
+function withPlaceholders(text) {
+  // Escape first, then mark still-unfilled [placeholders] for the operator.
+  return escHtml(text).replace(/\[([^\[\]]+)\]/g, '<span class="gc-ph">[$1]</span>');
+}
+
+const MODE_BADGES = {
+  confirm: '<span class="badge badge-success">Confirm</span>',
+  sensitive: '<span class="badge badge-warning">Ask gently</span>',
+  optional: '<span class="badge badge-neutral">Optional</span>',
+  ask: "",
+};
+
+async function openGuidedCall(call, phoneId) {
+  _activeCall = call;
   try {
-    _defaultCallFlow = await API.get("/api/call-flows/default");
-  } catch (e) { _defaultCallFlow = null; }
-  return _defaultCallFlow;
-}
-
-function renderCallFlowScript(flow) {
-  if (!flow) return "";
-  const esc = s => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;");
-  const qs = (flow.questions || []).map((q, i) => `<li>${esc(q)}</li>`).join("");
-  const rs = (flow.rules || []).map(r => `<li>${esc(r)}</li>`).join("");
-  const sc = flow.scoring || {};
-  return `
-    <details class="call-flow-script" style="margin-bottom:16px; border:1px solid var(--border-2); border-radius:8px; padding:12px; background:var(--bg-1)">
-      <summary style="cursor:pointer; font-weight:600">📋 Call Flow: ${esc(flow.name)}</summary>
-      <div style="margin-top:12px; font-size:var(--fs-sm); line-height:1.6">
-        <p><strong>Role:</strong> ${esc(flow.role)}</p>
-        <p><strong>Opening:</strong> ${esc(flow.opening)}</p>
-        <p style="margin-top:8px"><strong>Questions:</strong></p>
-        <ol style="margin:4px 0 8px 20px">${qs}</ol>
-        <p><strong>Rules:</strong></p>
-        <ul style="margin:4px 0 8px 20px">${rs}</ul>
-        <p><strong>Close:</strong> ${esc(flow.close)}</p>
-        <p style="margin-top:8px"><strong>Scoring:</strong></p>
-        <ul style="margin:4px 0 0 20px">
-          ${sc.hot ? `<li><span class="badge badge-success">Hot</span> ${esc(sc.hot)}</li>` : ""}
-          ${sc.warm ? `<li><span class="badge badge-warning">Warm</span> ${esc(sc.warm)}</li>` : ""}
-          ${sc.cold ? `<li><span class="badge badge-neutral">Cold</span> ${esc(sc.cold)}</li>` : ""}
-        </ul>
-      </div>
-    </details>`;
-}
-
-async function openLogCallModal(callId, phoneId) {
-  const flow = await loadDefaultCallFlow();
+    _guide = await API.get(`/api/call-flows/guide/${LEAD_ID}`);
+  } catch (e) { _guide = { flow: null }; toast("Couldn't load the call flow: " + e.message, "error"); }
+  const g = _guide;
   const outcomes = [
-    ["no_answer","No Answer"], ["voicemail","Voicemail"], ["wrong_number","Wrong Number"],
-    ["not_interested","Not Interested"], ["callback_requested","Callback Requested"],
-    ["warm","Warm Lead"], ["offer_sent","Offer Sent"], ["verbal_yes","Verbal Yes!"],
-    ["dnc_request","DNC Request"],
+    ["callback_requested","Callback Requested"], ["warm","Warm Lead"], ["verbal_yes","Verbal Yes!"],
+    ["offer_sent","Offer Sent"], ["not_interested","Not Interested"], ["no_answer","No Answer"],
+    ["voicemail","Voicemail"], ["wrong_number","Wrong Number"], ["dnc_request","DNC Request"],
   ];
-  const flowHtml = renderCallFlowScript(flow);
-  const html = `
-    ${flowHtml}
-    <div class="form-group"><label class="form-label">Outcome</label>
-      <select class="form-select" id="call-outcome">${outcomes.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div>
-    <div class="form-group"><label class="form-label">Duration (seconds)</label><input class="form-input" id="call-dur" type="number" value="0"></div>
-    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="call-notes" placeholder="Why selling? Timeline? Condition? Comfortable number?"></textarea></div>`;
-  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-    <button class="btn btn-primary" onclick="submitCallLog('${callId}')">Log Call</button>`;
-  openModal("Log Call Outcome", html, footer);
+  const isQuo = call.provider === "quo";
+  const bar = `<div class="gc-bar">
+      <span class="badge badge-info">${PROVIDER_LABELS[call.provider] || escHtml(call.provider)}</span>
+      <span>Attempt #${call.attempt_count}</span>
+      ${isQuo ? `<a class="btn btn-outline btn-sm" href="${escHtml(call.dial_url)}">↻ Re-open in Quo</a>
+                 <button class="btn btn-outline btn-sm" id="gc-sync-btn" onclick="syncGuidedCall()">⇣ Sync from Quo</button>
+                 <span class="text-muted" id="gc-sync-status">After hanging up, sync to pull duration, AI summary &amp; transcript.</span>` : ""}
+    </div>`;
+
+  let script = "";
+  if (g.flow) {
+    const context = g.context.length ? `<div class="gc-context"><strong>Before you dial</strong><ul>${g.context.map(c => `<li>${escHtml(c)}</li>`).join("")}</ul></div>` : "";
+    const questions = g.questions.map(q => `
+      <div class="gc-q ${q.prior_answer ? "answered" : ""}" id="gc-q-${q.index}">
+        <div class="gc-q-head">
+          <span class="gc-q-num">${q.index + 1}.</span>
+          <span class="gc-q-text">${withPlaceholders(q.text)}</span>
+          ${MODE_BADGES[q.mode] || ""}
+        </div>
+        ${q.known.length ? `<ul class="gc-known">${q.known.map(k => `<li>${escHtml(k)}</li>`).join("")}</ul>` : ""}
+        ${q.tip ? `<div class="gc-tip">${escHtml(q.tip)}</div>` : ""}
+        ${q.prior_answer ? `<div class="gc-prior">✓ Answered on ${fmtDate(q.prior_answer.at)} — confirm it's still true.</div>` : ""}
+        <textarea class="form-textarea gc-answer" data-q="${q.index}" data-topic="${escHtml(q.topic)}" rows="1"
+          placeholder="Seller's answer… (leave blank if skipped)">${escHtml(q.prior_answer ? q.prior_answer.answer : "")}</textarea>
+      </div>`).join("");
+    const sc = g.scoring || {};
+    script = `
+      ${context}
+      <div class="gc-section"><h4>Who you are</h4>
+        <details><summary class="text-sm" style="cursor:pointer">${escHtml(g.flow.name)} — role &amp; persona</summary>
+          <p class="text-sm mt-2">${withPlaceholders(g.role)}</p></details></div>
+      <div class="gc-section"><h4>1 · Opening</h4>
+        <div class="gc-say">${withPlaceholders(g.opening)}</div>
+        <div class="flex gap-2 mt-2" style="flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="quickExit('not_interested')">Never inquired / not interested → end call</button>
+          <button class="btn btn-outline btn-sm" onclick="quickExit('wrong_number')">Wrong person</button>
+        </div></div>
+      <div class="gc-section"><h4>2 · Confirm the details (in order)</h4>${questions}</div>
+      <div class="gc-section"><h4>3 · Score</h4>
+        <div class="gc-score">
+          <span id="gc-score-badge">${scoreBadge(null)}</span>
+          <label class="text-sm">Override:
+            <select class="form-select" id="gc-score-override" style="width:auto; display:inline-block">
+              <option value="">Auto</option><option value="hot">Hot</option><option value="warm">Warm</option><option value="cold">Cold</option>
+            </select></label>
+        </div>
+        <ul class="gc-reasons" id="gc-score-reasons"></ul>
+        <details class="mt-2"><summary class="text-sm text-muted" style="cursor:pointer">Rubric</summary>
+          <ul class="gc-reasons">
+            ${sc.hot ? `<li><strong>Hot:</strong> ${escHtml(sc.hot)}</li>` : ""}
+            ${sc.warm ? `<li><strong>Warm:</strong> ${escHtml(sc.warm)}</li>` : ""}
+            ${sc.cold ? `<li><strong>Cold:</strong> ${escHtml(sc.cold)}</li>` : ""}
+          </ul></details></div>
+      <div class="gc-section"><h4>4 · Close</h4><div class="gc-say" id="gc-close">${withPlaceholders(g.close)}</div></div>
+      <div class="gc-section"><h4>Rules</h4>
+        <details><summary class="text-sm" style="cursor:pointer">${g.rules.length} rules — never quote numbers, honor stop requests</summary>
+          <ul class="gc-reasons">${g.rules.map(r => `<li>${escHtml(r)}</li>`).join("")}</ul></details></div>`;
+  } else {
+    script = `<div class="gc-context">No active call flow — create one in Settings → Call Flows.</div>`;
+  }
+
+  const html = `${bar}${script}
+    <div class="gc-section" id="gc-quo-results" style="display:none"><h4>From Quo</h4><div id="gc-quo-body"></div></div>
+    <div class="gc-section"><h4>Log it</h4>
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">Outcome</label>
+          <select class="form-select" id="call-outcome">${outcomes.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div>
+        <div class="form-group"><label class="form-label">Duration (seconds)</label>
+          <input class="form-input" id="call-dur" type="number" min="0" placeholder="${isQuo ? "filled by Quo sync" : "0"}"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Notes</label>
+        <textarea class="form-textarea" id="call-notes" placeholder="Anything the questions didn't capture…"></textarea></div>
+    </div>`;
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-outline" style="color:var(--danger)" onclick="quickExit('dnc_request')">Stop calling → Do Not Call</button>
+    <button class="btn btn-primary" onclick="submitGuidedCall()">Log Call</button>`;
+  openModal(`📞 Guided Call — ${escHtml(_lead ? _lead.owner_name : "")}`, html, footer, { wide: true });
+
+  document.querySelectorAll(".gc-answer").forEach(el => el.addEventListener("input", onAnswerInput));
+  if (g.flow) { refreshClose(); scheduleScore(0); }
 }
 
-async function submitCallLog(callId) {
+function collectAnswers() {
+  const out = {};
+  document.querySelectorAll(".gc-answer").forEach(el => {
+    if (el.value.trim()) out[el.dataset.q] = el.value.trim();
+  });
+  return out;
+}
+
+function onAnswerInput(e) {
+  const box = document.getElementById(`gc-q-${e.target.dataset.q}`);
+  if (box) box.classList.toggle("answered", !!e.target.value.trim());
+  refreshClose();
+  scheduleScore(400);
+}
+
+function refreshClose() {
+  if (!_guide || !_guide.flow) return;
+  const cb = document.querySelector('.gc-answer[data-topic="callback"]');
+  let text = withPlaceholders(_guide.close);
+  if (cb && cb.value.trim()) {
+    text = text.replace(/<span class="gc-ph">\[agreed time\]<\/span>/i, `<strong>${escHtml(cb.value.trim())}</strong>`);
+  }
+  document.getElementById("gc-close").innerHTML = text;
+}
+
+function scheduleScore(delay) {
+  clearTimeout(_scoreTimer);
+  _scoreTimer = setTimeout(async () => {
+    if (!_guide || !_guide.flow) return;
+    try {
+      const s = await API.post("/api/call-flows/score", { lead_id: LEAD_ID, flow_id: _guide.flow.id, answers: collectAnswers() });
+      const badge = document.getElementById("gc-score-badge");
+      if (!badge) return;  // modal closed
+      badge.innerHTML = scoreBadge(s.score);
+      document.getElementById("gc-score-reasons").innerHTML = s.reasons.map(r => `<li>${escHtml(r)}</li>`).join("");
+      // Pre-select a sensible outcome from the score (operator can change it).
+      const outcome = document.getElementById("call-outcome");
+      if (s.score === "hot" || s.score === "warm") outcome.value = "callback_requested";
+    } catch (e) { /* scoring is advisory — never block the call */ }
+  }, delay);
+}
+
+async function syncGuidedCall() {
+  if (!_activeCall) return;
+  const btn = document.getElementById("gc-sync-btn");
+  const status = document.getElementById("gc-sync-status");
+  btn.disabled = true;
+  status.textContent = "Syncing with Quo…";
+  try {
+    const r = await API.post(`/api/calls/${_activeCall.id}/sync`);
+    if (!r.found) { status.textContent = r.message; return; }
+    status.textContent = `Quo call ${r.status}${r.duration_seconds != null ? ` · ${r.duration_seconds}s` : ""}` +
+      (r.summary_status !== "completed" ? " · AI summary still processing — sync again in a minute" : "");
+    if (r.duration_seconds != null) document.getElementById("call-dur").value = r.duration_seconds;
+    if (r.suggested_outcome) document.getElementById("call-outcome").value = r.suggested_outcome;
+    if (r.ai_summary || r.transcript) {
+      document.getElementById("gc-quo-results").style.display = "";
+      document.getElementById("gc-quo-body").innerHTML =
+        (r.ai_summary ? `<div class="gc-summary">${escHtml(r.ai_summary)}</div>` : "") +
+        (r.transcript ? `<details class="mt-2"><summary style="cursor:pointer">Transcript</summary><div class="gc-summary">${escHtml(r.transcript)}</div></details>` : "");
+    }
+  } catch (e) {
+    status.textContent = "Sync failed: " + e.message;
+  } finally { btn.disabled = false; }
+}
+
+async function syncCall(callId, btn) {
+  btn.disabled = true;
+  try {
+    const r = await API.post(`/api/calls/${callId}/sync`);
+    toast(r.found ? "Synced from Quo" : r.message, r.found ? "success" : "");
+    if (r.found) loadLead();
+  } catch (e) { toast("Sync failed: " + e.message, "error"); }
+  finally { btn.disabled = false; }
+}
+
+function quickExit(outcome) {
+  if (outcome === "dnc_request" && !confirm("Confirm removal: this number will be opted out and never called again.")) return;
+  document.getElementById("call-outcome").value = outcome;
+  submitGuidedCall();
+}
+
+async function submitGuidedCall() {
+  if (!_activeCall) return;
+  const dur = parseInt(document.getElementById("call-dur").value, 10);
+  const override = document.getElementById("gc-score-override");
+  const answers = collectAnswers();
   const body = {
     outcome: document.getElementById("call-outcome").value,
-    duration_seconds: parseInt(document.getElementById("call-dur").value) || null,
-    notes: document.getElementById("call-notes").value || null,
+    duration_seconds: Number.isFinite(dur) && dur > 0 ? dur : null,
+    notes: document.getElementById("call-notes").value.trim() || null,
   };
+  if (_guide && _guide.flow) {
+    body.call_flow_id = _guide.flow.id;
+    body.answers = answers;
+    body.lead_score = override && override.value ? override.value : null;  // null = score from answers
+  }
   try {
-    await API.post(`/api/calls/${callId}/log`, body);
-    document.querySelector(".modal-overlay").remove();
+    await API.post(`/api/calls/${_activeCall.id}/log`, body);
+    closeModal();
+    _activeCall = null;
     toast("Call logged + follow-up scheduled", "success");
     loadLead();
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 
+// ── Valuation / contract / buyers ────────────────────────────────
 function valuationModal() {
   const html = `
     <div class="form-group"><label class="form-label">Repair Level</label>
@@ -283,15 +479,16 @@ function valuationModal() {
       <label><input type="checkbox" id="val-pipe"> Repipe ($8-15k)</label>
       <label><input type="checkbox" id="val-panel"> Panel ($3-8k)</label>
     </div>`;
-  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
     <button class="btn btn-gold" onclick="submitValuation()">Compute MAO</button>`;
   openModal("Value The House", html, footer);
 }
 
 async function submitValuation() {
+  const fee = parseFloat(document.getElementById("val-fee").value);
   const body = {
     repair_level: document.getElementById("val-repair").value,
-    fee: parseFloat(document.getElementById("val-fee").value) || 15000,
+    fee: Number.isFinite(fee) && fee >= 0 ? fee : 15000,
     roof: document.getElementById("val-roof").checked,
     hvac: document.getElementById("val-hvac").checked,
     foundation: document.getElementById("val-found").checked,
@@ -300,7 +497,7 @@ async function submitValuation() {
   };
   try {
     await API.post(`/api/leads/${LEAD_ID}/valuation`, body);
-    document.querySelector(".modal-overlay").remove();
+    closeModal();
     toast("Valuation computed — MAO ready", "success");
     loadLead();
   } catch (e) { toast("Error: " + e.message, "error"); }
@@ -308,49 +505,56 @@ async function submitValuation() {
 
 function contractModal() {
   const html = `
-    <div class="form-group"><label class="form-label">Contract Price (your offer) ($)</label><input class="form-input" id="ct-price" type="number"></div>
+    <div class="form-group"><label class="form-label">Contract Price (your offer) ($)</label><input class="form-input" id="ct-price" type="number" min="1"></div>
     <div class="form-group"><label class="form-label">Assignment Fee ($)</label><input class="form-input" id="ct-fee" type="number" value="15000"></div>
     <div class="form-group"><label class="form-label">Buyer Price (what buyer pays) ($)</label><input class="form-input" id="ct-buyer" type="number"></div>
     <div class="form-group"><label class="form-label"><input type="checkbox" id="ct-disclosure" checked> TX Assignment Disclosure Sent</label></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ct-notes"></textarea></div>
     <div class="text-sm text-muted">Disclosure: we are selling the contract, not the house. Required in TX without a license.</div>`;
-  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="submitContract()">Create Contract</button>`;
   openModal("Lock It & Hand Off", html, footer);
 }
 
 async function submitContract() {
+  const price = parseFloat(document.getElementById("ct-price").value);
+  if (!Number.isFinite(price) || price <= 0) { toast("Enter the contract price (your offer).", "error"); return; }
+  const fee = parseFloat(document.getElementById("ct-fee").value);
+  const buyer = parseFloat(document.getElementById("ct-buyer").value);
   const body = {
-    contract_price: parseFloat(document.getElementById("ct-price").value) || 0,
-    assignment_fee: parseFloat(document.getElementById("ct-fee").value) || 15000,
-    buyer_price: parseFloat(document.getElementById("ct-buyer").value) || null,
+    contract_price: price,
+    assignment_fee: Number.isFinite(fee) && fee >= 0 ? fee : 15000,
+    buyer_price: Number.isFinite(buyer) && buyer > 0 ? buyer : null,
     disclosure_sent: document.getElementById("ct-disclosure").checked,
     notes: document.getElementById("ct-notes").value || null,
   };
   try {
     await API.post(`/api/contracts?lead_id=${LEAD_ID}`, body);
-    document.querySelector(".modal-overlay").remove();
+    closeModal();
     toast("Contract created — push to buyers now", "success");
     loadLead();
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 
 async function loadBuyers() {
+  const el = document.getElementById("matched-buyers");
+  if (!el) return;
   try {
     const data = await API.get(`/api/buyers/match/${LEAD_ID}`);
-    const el = document.getElementById("matched-buyers");
     if (data.buyers.length === 0) {
       el.innerHTML = '<div class="empty-state text-sm">No buyer matches for this lead\'s buy-box.</div>';
     } else {
       el.innerHTML = data.buyers.map((b, i) => `<div class="phone-row" style="background:var(--surface)">
         <div style="flex:1">
-          <div class="font-semi">#${i+1} ${b.name}</div>
-          <div class="text-xs text-muted">${b.company || ""} · ${fmtPhone(b.phone)} · ${b.target_cities || ""}</div>
+          <div class="font-semi">#${i+1} ${escHtml(b.name)}</div>
+          <div class="text-xs text-muted">${escHtml(b.company || "")} · ${fmtPhone(escHtml(b.phone))} · ${escHtml(b.target_cities || "")}</div>
         </div>
-        <span class="badge badge-info">${b.rehab_level || ""}</span>
+        ${b.rehab_level ? `<span class="badge badge-info">${escHtml(b.rehab_level)}</span>` : ""}
       </div>`).join("");
     }
-  } catch (e) { /* ignore — buyers may not match if no valuation */ }
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state text-sm">Run a valuation to match buyers.</div>';
+  }
 }
 
 loadLead().then(() => loadBuyers());

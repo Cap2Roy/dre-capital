@@ -30,14 +30,14 @@ async function loadBuyers() {
       body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">♛</div>No buyers yet.</div></td></tr>';
     } else {
       body.innerHTML = buyers.map((b, i) => `<tr>
-        <td class="col-mono">${b.ranking}</td>
-        <td class="font-semi">${b.name}</td>
-        <td>${b.company || "—"}</td>
-        <td class="col-mono">${fmtPhone(b.phone)}</td>
-        <td>${b.target_cities || "—"}, ${b.target_states || ""}</td>
+        <td class="col-mono">${escHtml(b.ranking)}</td>
+        <td class="font-semi">${escHtml(b.name)}</td>
+        <td>${escHtml(b.company) || "—"}</td>
+        <td class="col-mono">${escHtml(fmtPhone(b.phone))}</td>
+        <td>${fmtCityState(b.target_cities, b.target_states) || "—"}</td>
         <td class="col-num">${fmtMoneyK(b.min_price)} – ${fmtMoneyK(b.max_price)}</td>
-        <td class="col-mono">${b.min_beds || "—"}-${b.max_beds || "—"}</td>
-        <td><span class="badge badge-info">${b.rehab_level || "—"}</span></td>
+        <td class="col-mono">${escHtml(b.min_beds) || "—"}-${escHtml(b.max_beds) || "—"}</td>
+        <td><span class="badge badge-info">${escHtml(b.rehab_level) || "—"}</span></td>
         <td><button class="btn btn-outline btn-sm" onclick="location.href='/contracts'">Contracts</button></td>
       </tr>`).join("");
     }

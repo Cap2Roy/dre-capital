@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import Buyer, Contract, Lead, LeadStatus, Valuation
@@ -23,7 +23,12 @@ router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 
 @router.get("", response_model=list[ContractOut])
 def list_contracts(db: Session = Depends(get_db)):
-    return db.execute(select(Contract).order_by(Contract.created_at.desc())).scalars().all()
+    stmt = (
+        select(Contract)
+        .options(joinedload(Contract.lead), joinedload(Contract.buyer))
+        .order_by(Contract.created_at.desc())
+    )
+    return db.execute(stmt).scalars().all()
 
 
 @router.post("", response_model=ContractOut, status_code=201)
@@ -70,6 +75,8 @@ def update_status(contract_id: str, status: str, db: Session = Depends(get_db)):
     if status == "assigned":
         contract.assigned_at = datetime.now()
         contract.lead.status = LeadStatus.ASSIGNED
+    elif status == "signed":
+        contract.signed_at = datetime.now()
     elif status == "closed":
         contract.closed_at = datetime.now()
         contract.lead.status = LeadStatus.CLOSED

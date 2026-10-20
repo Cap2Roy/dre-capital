@@ -66,6 +66,49 @@
 <div class="settings-panel" id="tab-calling">
   <div class="card mb-4">
     <div class="card-header">
+      Quo (formerly OpenPhone)
+      <span id="quo-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        With Quo active, the ☎ Call button opens the number in the Quo app (set Quo as your
+        default calling app) — you press Call there; still manual-dial. After hanging up, the CRM
+        syncs the call's duration, Quo AI summary, and transcript. The key is stored in the
+        database (or the <code>QUO_API_KEY</code> env var) and is never shown back.
+      </p>
+      <form id="quo-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="calling-provider">Calling Provider</label>
+            <select id="calling-provider" class="form-select">
+              <option value="">Auto (Quo if key set, else Twilio)</option>
+              <option value="quo">Quo</option>
+              <option value="twilio">Twilio</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="quo-key">Quo API Key</label>
+            <input type="password" id="quo-key" class="form-input" placeholder="Paste key from Quo → Settings → API" autocomplete="off">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="quo-number-id">Quo Phone Number ID</label>
+            <input type="text" id="quo-number-id" class="form-input" placeholder="PN… (blank = auto-detect)">
+            <div class="form-hint" id="quo-line-hint"></div>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary">Save Quo Settings</button>
+          <button type="button" class="btn btn-outline" onclick="testQuo()">Test Connection</button>
+        </div>
+        <div id="quo-test-result" class="text-sm mt-4"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">
       Twilio Configuration
       <span id="twilio-status" class="badge badge-neutral">Checking…</span>
     </div>
@@ -291,6 +334,7 @@ let _settingsData = [];
 async function loadSettings() {
   try {
     _settingsData = await API.get("/api/settings");
+    populateQuoForm();
     populateTwilioForm();
     populateSkipTraceForm();
     populateCompsForm();
@@ -314,6 +358,14 @@ function getVal(key) {
 function isSet(key) {
   const s = _settingsData.find(x => x.key === key);
   return s ? s.is_set : false;
+}
+
+function populateQuoForm() {
+  document.getElementById("calling-provider").value = getVal("calling_provider") || "";
+  document.getElementById("quo-key").value = getVal("quo_api_key");
+  document.getElementById("quo-number-id").value = getVal("quo_phone_number_id");
+  const num = getVal("quo_from_number");
+  document.getElementById("quo-line-hint").textContent = num ? `Calls go out from ${num}.` : "";
 }
 
 function populateTwilioForm() {
@@ -345,6 +397,11 @@ function populateCadenceForm() {
 }
 
 function updateStatusBadges() {
+  const quoOk = isSet("quo_api_key");
+  const quoBadge = document.getElementById("quo-status");
+  quoBadge.className = `badge ${quoOk ? "badge-success" : "badge-warning"}`;
+  quoBadge.textContent = quoOk ? "✓ Key set" : "⚠ Not Configured";
+
   const twilioOk = isSet("twilio_account_sid") && isSet("twilio_auth_token") && isSet("twilio_from_number");
   const stBadge = document.getElementById("twilio-status");
   stBadge.className = `badge ${twilioOk ? "badge-success" : "badge-warning"}`;
@@ -362,6 +419,35 @@ function updateStatusBadges() {
 }
 
 // ── Save handlers ─────────────────────────────────────────────
+document.getElementById("quo-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "calling_provider", value: document.getElementById("calling-provider").value },
+    { key: "quo_api_key", value: document.getElementById("quo-key").value },
+    { key: "quo_phone_number_id", value: document.getElementById("quo-number-id").value.trim() },
+    // Re-detect the line's number whenever the ID may have changed.
+    { key: "quo_from_number", value: "" },
+  ], "Quo settings saved");
+});
+
+async function testQuo() {
+  const out = document.getElementById("quo-test-result");
+  out.textContent = "Testing…";
+  try {
+    const r = await API.get("/api/calls/provider?check=true");
+    if (r.provider !== "quo") {
+      out.innerHTML = `<span class="badge badge-warning">Active provider: ${escHtml(r.provider)}</span> — set the provider to Quo (or Auto with a key) to use Quo.`;
+      return;
+    }
+    if (r.quo.ok) {
+      out.innerHTML = `<span class="badge badge-success">✓ Connected</span> Line ${escHtml(r.quo.line.number)} (${escHtml(r.quo.line.id)}) · ${r.quo.numbers.length} number(s) in workspace`;
+      await loadSettings();
+    } else {
+      out.innerHTML = `<span class="badge badge-danger">✗ Failed</span> ${escHtml(r.quo.error)}`;
+    }
+  } catch (err) { out.innerHTML = `<span class="badge badge-danger">✗ Error</span> ${escHtml(err.message)}`; }
+}
+
 document.getElementById("twilio-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   await saveSettings([
@@ -411,26 +497,28 @@ async function saveSettings(items, successMsg) {
 }
 
 // ── User management (admin) ──────────────────────────────────
+// User data never goes into inline onclick strings — handlers look users up by ID.
+let _users = [];
 async function loadUsers() {
   try {
-    const users = await API.get("/api/users");
+    _users = await API.get("/api/users");
     const el = document.getElementById("users-list");
     el.innerHTML = `<table class="data-table">
       <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>${users.map(u => `
+      <tbody>${_users.map(u => `
         <tr>
           <td><strong>${esc(u.name)}</strong></td>
           <td class="text-sm">${esc(u.email)}</td>
-          <td><span class="badge badge-${u.role === 'admin' ? 'gold' : 'info'}">${u.role}</span></td>
+          <td><span class="badge badge-${u.role === 'admin' ? 'gold' : 'info'}">${esc(u.role)}</span></td>
           <td>${u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-danger">Disabled</span>'}</td>
           <td>
-            <button class="btn btn-outline btn-sm" onclick="editUser('${u.id}','${esc(u.name)}','${u.email}','${u.role}',${u.active})">Edit</button>
-            ${u.active ? `<button class="btn btn-danger btn-sm" onclick="deactivateUser('${u.id}','${esc(u.name)}')">Disable</button>` : ''}
+            <button class="btn btn-outline btn-sm" onclick="editUser('${u.id}')">Edit</button>
+            ${u.active ? `<button class="btn btn-danger btn-sm" onclick="deactivateUser('${u.id}')">Disable</button>` : ''}
           </td>
         </tr>`).join("")}
       </tbody></table>`;
   } catch (err) {
-    document.getElementById("users-list").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${err.message}</div>`;
+    document.getElementById("users-list").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${esc(err.message)}</div>`;
   }
 }
 
@@ -477,7 +565,10 @@ async function submitNewUser() {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-function editUser(id, name, email, role, active) {
+function editUser(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  const { name, email, role } = u;
   openModal("Edit User", `
     <div class="form-group">
       <label class="form-label">Name</label>
@@ -518,8 +609,9 @@ async function submitEditUser(id) {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-async function deactivateUser(id, name) {
-  if (!confirm(`Deactivate ${name}? They will lose access immediately.`)) return;
+async function deactivateUser(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u || !confirm(`Deactivate ${u.name}? They will lose access immediately.`)) return;
   try {
     await API.post(`/api/users/${id}/deactivate`, {});
     toast("User deactivated", "success");
@@ -527,19 +619,20 @@ async function deactivateUser(id, name) {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+const esc = escHtml;
 
 // ── Call Flows ──────────────────────────────────────────────────
+let _flows = [];
 async function loadCallFlows() {
   try {
-    const flows = await API.get("/api/call-flows");
+    const flows = _flows = await API.get("/api/call-flows");
     const el = document.getElementById("call-flows-list");
     if (!flows || flows.length === 0) {
       el.innerHTML = '<div class="empty-state"><div class="icon">📋</div>No call flows yet. Click "+ New Call Flow".</div>';
       return;
     }
     el.innerHTML = flows.map(f => `
-      <div class="card mb-2" style="box-shadow:none; border:1px solid var(--border-2)">
+      <div class="card mb-2" style="box-shadow:none; border:1px solid var(--border)">
         <div class="card-body" style="padding:12px">
           <div style="display:flex; justify-content:space-between; align-items:start; gap:12px">
             <div>
@@ -552,7 +645,7 @@ async function loadCallFlows() {
             <div style="display:flex; gap:6px; flex-wrap:wrap">
               <button class="btn btn-outline btn-sm" onclick="showCallFlowModal('${f.id}')">Edit</button>
               ${!f.is_default ? `<button class="btn btn-outline btn-sm" onclick="setDefaultFlow('${f.id}')">Set Default</button>` : ''}
-              <button class="btn btn-outline btn-sm" onclick="deleteFlow('${f.id}','${esc(f.name)}')">Delete</button>
+              <button class="btn btn-outline btn-sm" onclick="deleteFlow('${f.id}')">Delete</button>
             </div>
           </div>
         </div>
@@ -566,8 +659,8 @@ async function showCallFlowModal(id) {
     try { flow = await API.get(`/api/call-flows/${id}`); } catch (err) { toast("Error: " + err.message, "error"); return; }
   }
   const f = flow || {};
-  const qs = (f.questions || []).map(q => esc(q)).join("\\n");
-  const rs = (f.rules || []).map(r => esc(r)).join("\\n");
+  const qs = (f.questions || []).map(q => esc(q)).join("\n");
+  const rs = (f.rules || []).map(r => esc(r)).join("\n");
   const sc = f.scoring || {};
   const html = `
     <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="cf-name" value="${esc(f.name || '')}"></div>
@@ -584,11 +677,11 @@ async function showCallFlowModal(id) {
     <div class="form-group"><label class="form-label"><input type="checkbox" id="cf-active" ${f.active !== false ? 'checked' : ''}> Active</label></div>`;
   const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="saveCallFlow('${id || ''}')">${id ? 'Save' : 'Create'}</button>`;
-  openModal(id ? "Edit Call Flow" : "New Call Flow", html, footer);
+  openModal(id ? "Edit Call Flow" : "New Call Flow", html, footer, { wide: true });
 }
 
 async function saveCallFlow(id) {
-  const split = (id2) => (document.getElementById(id2).value || "").split("\\n").map(s => s.trim()).filter(Boolean);
+  const split = (id2) => (document.getElementById(id2).value || "").split("\n").map(s => s.trim()).filter(Boolean);
   const body = {
     name: document.getElementById("cf-name").value.trim(),
     description: document.getElementById("cf-desc").value.trim() || null,
@@ -623,8 +716,9 @@ async function setDefaultFlow(id) {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-async function deleteFlow(id, name) {
-  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+async function deleteFlow(id) {
+  const f = _flows.find(x => x.id === id);
+  if (!f || !confirm(`Delete "${f.name}"? This cannot be undone.`)) return;
   try {
     await API.delete(`/api/call-flows/${id}`);
     toast("Call flow deleted", "success");

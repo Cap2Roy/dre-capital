@@ -14,6 +14,7 @@ from app.schemas import (
     ScrapeResultOut,
     ScrapeSourceCreate,
     ScrapeSourceOut,
+    ScrapeSourceUpdate,
 )
 from app.services.scraper import get_source_directory, import_scrape_results, run_scrape_job
 
@@ -52,23 +53,19 @@ def create_source(body: ScrapeSourceCreate, db: Session = Depends(get_db)):
 @router.put("/sources/{source_id}", response_model=ScrapeSourceOut)
 def update_source(
     source_id: str,
-    body: ScrapeSourceCreate,
+    body: ScrapeSourceUpdate,
     db: Session = Depends(get_db),
 ):
-    """Update an existing scrape source."""
+    """Update an existing scrape source — only fields present in the body are applied."""
     source = db.get(ScrapeSource, source_id)
     if not source:
         raise HTTPException(404, "Source not found")
-    source.name = body.name
-    source.url = body.url
-    source.source_type = body.source_type
-    source.state = body.state
-    source.county = body.county
-    if body.search_params is not None:
-        source.search_params = body.search_params
-    if body.api_key is not None:
-        source.api_key = body.api_key
-    source.auto_scrape = body.auto_scrape
+    # Non-nullable columns + secrets: an explicit null means "keep current".
+    keep_on_null = {"name", "url", "source_type", "auto_scrape", "search_params", "api_key"}
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if value is None and field in keep_on_null:
+            continue
+        setattr(source, field, value)
     db.commit()
     db.refresh(source)
     return source

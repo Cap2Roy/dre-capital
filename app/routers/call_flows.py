@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import CallFlow
-from app.schemas import CallFlowCreate, CallFlowOut, CallFlowUpdate
+from app.models import CallFlow, Lead
+from app.schemas import CallFlowCreate, CallFlowOut, CallFlowUpdate, CallScoreRequest
 from app.services.auth import require_admin, require_user
 
 router = APIRouter(prefix="/api/call-flows", tags=["call-flows"])
@@ -64,6 +64,43 @@ def get_default_call_flow(db: Session = Depends(get_db), _user=Depends(require_u
             select(CallFlow).where(CallFlow.active == True).order_by(CallFlow.created_at.desc()).limit(1)
         ).scalars().first()
     return flow
+
+
+@router.get("/guide/{lead_id}")
+def get_call_guide(
+    lead_id: str,
+    flow_id: str | None = None,
+    db: Session = Depends(get_db),
+    _user=Depends(require_user),
+):
+    """The call flow adapted to one lead: filled placeholders, per-question facts
+    on record, asking tips, and answers captured on earlier calls."""
+    from app.services.call_guide import build_call_guide
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    flow = None
+    if flow_id:
+        flow = db.get(CallFlow, flow_id)
+        if not flow:
+            raise HTTPException(404, "Call flow not found")
+    return build_call_guide(db, lead, flow)
+
+
+@router.post("/score")
+def score_call(payload: CallScoreRequest, db: Session = Depends(get_db), _user=Depends(require_user)):
+    """Apply the flow's Hot/Warm/Cold rubric to the answers captured so far."""
+    from app.services.call_guide import score_answers
+    lead = db.get(Lead, payload.lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    flow = db.get(CallFlow, payload.flow_id) if payload.flow_id else db.execute(
+        select(CallFlow).where(CallFlow.is_default == True).limit(1)  # noqa: E712
+    ).scalars().first()
+    if not flow:
+        raise HTTPException(404, "Call flow not found")
+    return score_answers(db, lead, flow, payload.answers)
+
 
 
 @router.get("/{flow_id}", response_model=CallFlowOut)

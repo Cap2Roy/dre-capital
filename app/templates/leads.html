@@ -16,9 +16,10 @@
     <option value="new">New</option><option value="working">Working</option>
     <option value="warm">Warm</option><option value="under_contract">Under Contract</option>
     <option value="assigned">Assigned</option><option value="closed">Closed</option>
+    <option value="dead">Dead</option>
   </select>
   <select class="form-select" id="filter-state" style="width:auto">
-    <option value="">All States</option><option value="TX">TX</option>
+    <option value="">All States</option><option value="MI">MI</option><option value="TX">TX</option>
   </select>
   <select class="form-select" id="filter-stack" style="width:auto">
     <option value="">All Stacks</option>
@@ -76,10 +77,10 @@ async function loadLeads() {
     } else {
       body.innerHTML = data.leads.map(l => `<tr onclick="location.href='/leads/${l.id}'">
         <td>${stackBadge(l.stack_depth)}</td>
-        <td><div class="font-semi">${l.property_address}</div>
-          <div class="text-xs text-muted">${l.property_zip || ""} ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""} ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}</div></td>
-        <td>${l.owner_name}</td>
-        <td>${l.property_city || "—"}, ${l.property_state || ""}</td>
+        <td><div class="font-semi">${escHtml(l.property_address)}</div>
+          <div class="text-xs text-muted">${escHtml(l.property_zip)} ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""} ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}</div></td>
+        <td>${escHtml(l.owner_name)}</td>
+        <td>${fmtCityState(l.property_city, l.property_state) || "—"}</td>
         <td>${l.beds || "—"}</td>
         <td class="col-mono">${l.sqft ? l.sqft.toLocaleString() : "—"}</td>
         <td class="col-num">${fmtMoneyK(l.assessed_value)}</td>
@@ -146,10 +147,6 @@ document.getElementById("search").addEventListener("input", () => {
 ["filter-status", "filter-state", "filter-stack", "sort"].forEach(id =>
   document.getElementById(id).addEventListener("change", () => { curPage = 1; loadLeads(); }));
 
-(async () => {
-  const q = await API.get("/api/dashboard/queue");
-  document.getElementById("nav-queue-count").textContent = q.count;
-  loadLeads();
-})();
+loadLeads();
 </script>
 {% endblock %}

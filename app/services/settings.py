@@ -67,6 +67,35 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "",
         "description": "Default phone number for the acquisitions operator (E.164). Used if not prompted per-call.",
     },
+    # ── Calling provider (Quo, formerly OpenPhone) ─────────────────
+    "calling_provider": {
+        "label": "Calling Provider",
+        "category": "calling",
+        "is_secret": False,
+        "env": "CALLING_PROVIDER",
+        "description": "'quo' or 'twilio'. Blank = auto (Quo if its API key is set, else Twilio, else dry-run).",
+    },
+    "quo_api_key": {
+        "label": "Quo API Key",
+        "category": "calling",
+        "is_secret": True,
+        "env": "QUO_API_KEY",
+        "description": "API key from Quo → Settings → API. Used to sync call results, AI summaries, and transcripts.",
+    },
+    "quo_phone_number_id": {
+        "label": "Quo Phone Number ID",
+        "category": "calling",
+        "is_secret": False,
+        "env": "QUO_PHONE_NUMBER_ID",
+        "description": "Quo number ID (PN…) that calls are placed from. Blank = auto-detect the workspace's first number.",
+    },
+    "quo_from_number": {
+        "label": "Quo From Number",
+        "category": "calling",
+        "is_secret": False,
+        "env": "",
+        "description": "E.164 number of the Quo line (filled automatically when the number ID is detected).",
+    },
     # ── Auto-scrape ────────────────────────────────────────────────
     "auto_scrape_enabled": {
         "label": "Daily Auto-Scrape Enabled",
@@ -357,6 +386,27 @@ def get_twilio_config(db: Session) -> dict:
         "auth_token": get_setting(db, "twilio_auth_token") or "",
         "from_number": get_setting(db, "twilio_from_number") or "",
     }
+
+
+CALLING_PROVIDERS = ("quo", "twilio")
+
+
+def get_calling_provider(db: Session) -> str:
+    """Active calling provider: 'quo', 'twilio', or 'dry-run'.
+
+    An explicit ``calling_provider`` setting wins.  Otherwise Quo is used when
+    its API key is set, then Twilio when fully configured, else a dry-run that
+    still logs calls so the pipeline works end-to-end in dev.
+    """
+    explicit = (get_setting(db, "calling_provider") or "").strip().lower()
+    if explicit in CALLING_PROVIDERS:
+        return explicit
+    if get_setting(db, "quo_api_key"):
+        return "quo"
+    cfg = get_twilio_config(db)
+    if cfg["account_sid"] and cfg["auth_token"] and cfg["from_number"]:
+        return "twilio"
+    return "dry-run"
 
 
 def get_call_cadence(db: Session) -> dict[str, int]:

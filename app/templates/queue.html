@@ -44,17 +44,16 @@ async function loadQueue() {
         <td>${stackBadge(l.stack_depth)}</td>
         <td>${tierLabel(l.stack_depth)}</td>
         <td onclick="location.href='/leads/${l.id}'" style="cursor:pointer">
-          <div class="font-semi">${l.address}</div>
-          <div class="text-xs text-muted">${l.city}, ${l.state}</div></td>
-        <td>${l.owner}</td>
-        <td class="col-mono">•••${l.phone_preview || ""}</td>
+          <div class="font-semi">${escHtml(l.address)}</div>
+          <div class="text-xs text-muted">${fmtCityState(l.city, l.state)}</div></td>
+        <td>${escHtml(l.owner)}</td>
+        <td class="col-mono">•••${escHtml(l.phone_preview)}</td>
         <td>${statusBadge(l.status)}</td>
         <td class="col-mono">${l.call_count}</td>
         <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger" : "text-muted"}">${fmtDate(l.next_followup)}</td>
         <td><a href="/leads/${l.id}" class="btn btn-primary btn-sm">Open →</a></td>
       </tr>`).join("");
     }
-    document.getElementById("nav-queue-count").textContent = data.count;
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 loadQueue();

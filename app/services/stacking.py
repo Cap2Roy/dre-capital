@@ -59,6 +59,7 @@ def get_or_create_lead(
     property_city: str | None = None,
     property_state: str | None = None,
     owner_name: str | None = None,
+    owner_email: str | None = None,
     mailing_address: str | None = None,
     mailing_city: str | None = None,
     mailing_state: str | None = None,
@@ -67,6 +68,7 @@ def get_or_create_lead(
     baths: float | None = None,
     sqft: int | None = None,
     year_built: int | None = None,
+    rehab_level: str | None = None,
     assessed_value: float | None = None,
     taxes_owed: float | None = None,
     owner_is_llc: bool = False,
@@ -111,13 +113,14 @@ def get_or_create_lead(
             property_city=property_city,
             property_state=property_state,
             owner_name=owner_name or "",
+            owner_email=owner_email,
             owner_is_llc=owner_is_llc,
             mailing_address=mailing_address,
             mailing_city=mailing_city,
             mailing_state=mailing_state,
             mailing_zip=mailing_zip,
             absentee=absentee,
-            beds=beds, baths=baths, sqft=sqft, year_built=year_built,
+            beds=beds, baths=baths, sqft=sqft, year_built=year_built, rehab_level=rehab_level,
             assessed_value=assessed_value, taxes_owed=taxes_owed,
         )
         db.add(lead)
@@ -126,11 +129,12 @@ def get_or_create_lead(
 
     # Update with any richer data
     updated = False
-    for attr, val in [("owner_name", owner_name), ("property_city", property_city),
+    for attr, val in [("owner_name", owner_name), ("owner_email", owner_email),
+                      ("property_city", property_city),
                       ("property_state", property_state), ("mailing_address", mailing_address),
                       ("mailing_city", mailing_city), ("mailing_state", mailing_state),
                       ("mailing_zip", mailing_zip), ("beds", beds), ("baths", baths),
-                      ("sqft", sqft), ("year_built", year_built),
+                      ("sqft", sqft), ("year_built", year_built), ("rehab_level", rehab_level),
                       ("assessed_value", assessed_value), ("taxes_owed", taxes_owed)]:
         if val is not None and not getattr(lead, attr):
             setattr(lead, attr, val)

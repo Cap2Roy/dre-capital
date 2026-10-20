@@ -185,10 +185,10 @@ class Lead(TimestampMixin, Base):
     list_memberships: Mapped[list["LeadListMembership"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     phones: Mapped[list["Phone"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     comps: Mapped[list["Comp"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
-    valuations: Mapped[list["Valuation"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    valuations: Mapped[list["Valuation"]] = relationship(back_populates="lead", cascade="all, delete-orphan", order_by="Valuation.created_at.desc()")
     calls: Mapped[list["Call"]] = relationship(back_populates="lead")
     followups: Mapped[list["FollowUp"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
-    contracts: Mapped[list["Contract"]] = relationship(back_populates="lead")
+    contracts: Mapped[list["Contract"]] = relationship(back_populates="lead", order_by="Contract.created_at.desc()")
     messages: Mapped[list["MessageLog"]] = relationship(back_populates="lead")
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="lead")
 
@@ -278,9 +278,18 @@ class Call(TimestampMixin, Base):
     outcome: Mapped[CallOutcome] = mapped_column(Enum(CallOutcome), index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=1)
     duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
-    call_sid: Mapped[Optional[str]] = mapped_column(String(64))  # Twilio call SID
+    # Provider-side call ID: Twilio CallSid or Quo call ID (AC…).
+    call_sid: Mapped[Optional[str]] = mapped_column(String(64))
+    # Which service carried the call: twilio | quo | dry-run.
+    provider: Mapped[str] = mapped_column(String(16), default="dry-run")
     notes: Mapped[Optional[str]] = mapped_column(Text)
     call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id"), nullable=True)
+    # Call-guide capture: JSON {question_index: answer} + Hot/Warm/Cold score.
+    answers: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lead_score: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    # Synced from the provider after the call (Quo AI summary + transcript).
+    ai_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     lead: Mapped["Lead"] = relationship(back_populates="calls")
     caller: Mapped[Optional["User"]] = relationship(back_populates="calls")
     call_flow: Mapped[Optional["CallFlow"]] = relationship(back_populates="calls")
