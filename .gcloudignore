@@ -1,0 +1,4 @@
+# Files excluded from `gcloud builds submit` uploads (mirrors .dockerignore).
+#!include:.dockerignore
+.gcloudignore
+.gitignore

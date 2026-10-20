@@ -13,13 +13,14 @@ Comps rules (appraiser-style):
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Comp, Lead, Valuation
+from app.timeutil import utcnow
 
 ARV_FACTOR = 0.70  # manual: (ARV × 0.70) − repairs − fee
 
@@ -157,7 +158,7 @@ def mock_comps_for_lead(lead: Lead, count: int = 6) -> list[Comp]:
             sqft=sqft,
             beds=lead.beds or random.randint(3, 4),
             baths=lead.baths or float(random.randint(2, 3)),
-            sold_date=datetime.now() - timedelta(days=days_ago),
+            sold_date=utcnow() - timedelta(days=days_ago),
             distance_miles=round(random.uniform(0.2, 0.9), 2),
             price_per_sqft=ppsf,
             is_renovated=random.random() > 0.4,

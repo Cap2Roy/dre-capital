@@ -1,8 +1,6 @@
 """Contracts router: lock it and hand it off."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -10,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import Buyer, Contract, Lead, LeadStatus, Valuation
 from app.schemas import ContractCreate, ContractOut
+from app.timeutil import utcnow
 
 from app.services.contracts import (
     contract_context,
@@ -52,7 +51,7 @@ def create_contract(payload: ContractCreate, lead_id: str = None, db: Session = 
         assignment_fee=payload.assignment_fee,
         buyer_price=payload.buyer_price,
         status=payload.status or "pending",
-        signed_at=datetime.now() if payload.status == "signed" else None,
+        signed_at=utcnow() if payload.status == "signed" else None,
         disclosure_sent=payload.disclosure_sent,
         notes=payload.notes,
     )
@@ -73,12 +72,12 @@ def update_status(contract_id: str, status: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Contract not found")
     contract.status = status
     if status == "assigned":
-        contract.assigned_at = datetime.now()
+        contract.assigned_at = utcnow()
         contract.lead.status = LeadStatus.ASSIGNED
     elif status == "signed":
-        contract.signed_at = datetime.now()
+        contract.signed_at = utcnow()
     elif status == "closed":
-        contract.closed_at = datetime.now()
+        contract.closed_at = utcnow()
         contract.lead.status = LeadStatus.CLOSED
     db.commit()
     db.refresh(contract)

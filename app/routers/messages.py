@@ -85,7 +85,7 @@ def delete_template(template_id: str, db: Session = Depends(get_db)):
 # ── Send / history ───────────────────────────────────────────────────────────
 
 @router.post("/send", response_model=MessageLogOut)
-def send_message(payload: SendSmsRequest, db: Session = Depends(get_db)):
+def send_message(payload: SendSmsRequest, request: Request, db: Session = Depends(get_db)):
     """Send a manual SMS to a lead's phone (body or template)."""
     phone = db.get(Phone, payload.phone_id)
     if not phone:
@@ -100,7 +100,9 @@ def send_message(payload: SendSmsRequest, db: Session = Depends(get_db)):
         if not template:
             raise HTTPException(404, "Template not found")
     try:
-        entry = send_sms(db, lead, phone, body=payload.body, template=template)
+        user = getattr(request.state, "user", None)
+        entry = send_sms(db, lead, phone, body=payload.body, template=template,
+                         sent_by=user.id if user else None)
         db.commit()
         db.refresh(entry)
         return entry

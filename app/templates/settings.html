@@ -60,6 +60,39 @@
       </div>
     </div>
   </div>
+
+  <div class="card mt-4">
+    <div class="card-header">
+      My Quo Line
+      <span id="my-quo-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        Add your own Quo API key (Quo → Settings → API) to call and text sellers from <strong>your</strong>
+        Quo number. Without one you use the company line. The key is verified with Quo before it's
+        saved and is never shown again.
+      </p>
+      <form id="my-quo-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="my-quo-key">My Quo API Key</label>
+            <input type="password" id="my-quo-key" class="form-input" autocomplete="off" placeholder="Paste your Quo API key">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="my-quo-number">Quo Phone Number ID</label>
+            <input type="text" id="my-quo-number" class="form-input" placeholder="PN… (blank = your first number)">
+            <div class="form-hint" id="my-quo-hint"></div>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary">Save My Quo Key</button>
+          <button type="button" class="btn btn-outline" onclick="testMyQuo()">Test</button>
+          <button type="button" class="btn btn-outline" id="my-quo-remove" style="display:none; color:var(--danger)" onclick="removeMyQuo()">Remove</button>
+        </div>
+        <div id="my-quo-result" class="text-sm mt-4"></div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <!-- ── Calling & API Keys Tab ─────────────────────────────────── -->
@@ -101,7 +134,10 @@
         <div class="flex gap-2">
           <button type="submit" class="btn btn-primary">Save Quo Settings</button>
           <button type="button" class="btn btn-outline" onclick="testQuo()">Test Connection</button>
+          <button type="button" class="btn btn-outline" onclick="enableQuoAutoSync()">Enable Auto-Sync</button>
         </div>
+        <div class="form-hint mt-2">Auto-sync registers Quo webhooks so calls, AI summaries, transcripts, and STOP replies
+          arrive automatically (needs the public HTTPS app URL; it re-arms itself on every restart).</div>
         <div id="quo-test-result" class="text-sm mt-4"></div>
       </form>
     </div>
@@ -496,6 +532,70 @@ async function saveSettings(items, successMsg) {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
+async function enableQuoAutoSync() {
+  const out = document.getElementById("quo-test-result");
+  out.textContent = "Registering webhooks with Quo…";
+  try {
+    const r = await API.post("/api/calls/quo/webhooks");
+    out.innerHTML = r.registered
+      ? `<span class="badge badge-success">✓ Auto-sync on</span> ${r.registered} webhooks → ${escHtml(r.url)}`
+      : `<span class="badge badge-warning">Not enabled</span> ${escHtml(r.skipped || "")}`;
+  } catch (err) { out.innerHTML = `<span class="badge badge-danger">✗ Error</span> ${escHtml(err.message)}`; }
+}
+
+// ── My Quo line (every user) ──────────────────────────────────
+function renderMyQuo(q) {
+  const badge = document.getElementById("my-quo-status");
+  badge.className = `badge ${q.has_personal_key ? "badge-success" : "badge-neutral"}`;
+  badge.textContent = q.has_personal_key ? "✓ Personal line" : (q.company_key_set ? "Using company line" : "Not set");
+  document.getElementById("my-quo-key").value = q.has_personal_key ? "••••" : "";
+  document.getElementById("my-quo-number").value = q.phone_number_id || "";
+  document.getElementById("my-quo-hint").textContent = q.from_number ? `Your calls and texts go out from ${q.from_number}.` : "";
+  document.getElementById("my-quo-remove").style.display = q.has_personal_key ? "" : "none";
+}
+
+async function loadMyQuo() {
+  try { renderMyQuo(await API.get("/api/auth/me/quo")); }
+  catch (err) { document.getElementById("my-quo-status").textContent = "Unavailable"; }
+}
+
+document.getElementById("my-quo-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = document.getElementById("my-quo-result");
+  out.textContent = "Verifying with Quo…";
+  try {
+    const r = await API.put("/api/auth/me/quo", {
+      api_key: document.getElementById("my-quo-key").value,
+      phone_number_id: document.getElementById("my-quo-number").value,
+    });
+    renderMyQuo(r);
+    const sync = r.auto_sync || {};
+    out.innerHTML = `<span class="badge badge-success">✓ Saved</span> Line ${escHtml(r.line.number)}` +
+      (sync.registered ? " · auto-sync on" : (sync.skipped ? ` · ${escHtml(sync.skipped)}` : ""));
+  } catch (err) { out.innerHTML = `<span class="badge badge-danger">✗ Not saved</span> ${escHtml(err.message)}`; }
+});
+
+async function testMyQuo() {
+  const out = document.getElementById("my-quo-result");
+  out.textContent = "Testing…";
+  try {
+    const r = await API.get("/api/calls/provider?check=true");
+    if (r.provider !== "quo") { out.innerHTML = `Your calls use <strong>${escHtml(r.provider)}</strong> — add a Quo key above to use Quo.`; return; }
+    out.innerHTML = r.quo.ok
+      ? `<span class="badge badge-success">✓ Connected</span> ${r.quo_line === "personal" ? "Your" : "Company"} line ${escHtml(r.quo.line.number)}`
+      : `<span class="badge badge-danger">✗ Failed</span> ${escHtml(r.quo.error)}`;
+  } catch (err) { out.innerHTML = `<span class="badge badge-danger">✗ Error</span> ${escHtml(err.message)}`; }
+}
+
+async function removeMyQuo() {
+  if (!confirm("Remove your personal Quo key? Your calls will use the company line.")) return;
+  try {
+    const r = await API.put("/api/auth/me/quo", { remove: true });
+    renderMyQuo(r);
+    document.getElementById("my-quo-result").textContent = r.message;
+  } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
 // ── User management (admin) ──────────────────────────────────
 // User data never goes into inline onclick strings — handlers look users up by ID.
 let _users = [];
@@ -728,6 +828,7 @@ async function deleteFlow(id) {
 
 // ── Init ───────────────────────────────────────────────────────
 loadSettings();
+loadMyQuo();
 {% if is_admin %}loadUsers(); loadCallFlows();{% endif %}
 </script>
 {% endblock %}

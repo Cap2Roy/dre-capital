@@ -1,8 +1,12 @@
-"""Outbound/inbound SMS (and email) via Twilio, with a pluggable mock/dry-run.
+"""Outbound/inbound SMS (and email) via Quo or Twilio, with a dry-run fallback.
 
 Compliance note: SMS is manual — the operator sends a text, or a template is
 fired explicitly from the UI.  No automated text-blasting without a human click.
-Inbound STOP/UNSUBSCRIBE keywords instantly opt the number out (DNC).
+Inbound STOP/UNSUBSCRIBE keywords instantly opt the number out (DNC) — Twilio
+via /api/messages/inbound, Quo via its signed message.received webhook.
+
+Texts go out on the same provider the operator calls with (see
+``settings.get_calling_provider``) so the seller sees one consistent number.
 """
 from __future__ import annotations
 
@@ -92,10 +96,11 @@ def send_sms(
     template: Optional[MessageTemplate] = None,
     sent_by: Optional[str] = None,
 ) -> MessageLog:
-    """Send a manual SMS to a lead's phone.  Honors opt-out; dry-runs without Twilio.
+    """Send a manual SMS to a lead's phone.  Honors opt-out; dry-runs without a provider.
 
     Exactly one of ``body`` or ``template`` must be provided.  If the phone is
-    opted out / DNC-flagged we refuse and log nothing.
+    opted out / DNC-flagged we refuse and log nothing.  Sends through Quo when
+    that's the sender's calling provider, else Twilio, else records a dry-run.
     """
     from app.services.skiptrace import is_callable
 
@@ -107,9 +112,14 @@ def send_sms(
     if not body:
         raise ValueError("SMS body is required.")
 
-    # Twilio enforces 1600-char SMS limit (concatenated).  Guard against longer.
+    # Both providers cap a message at 1600 characters.
     if len(body) > 1600:
         raise ValueError("SMS body exceeds 1600 characters.")
+
+    from app.models import User
+    from app.services.settings import get_calling_provider
+    sender = db.get(User, sent_by) if sent_by else None
+    provider = get_calling_provider(db, sender)
 
     entry = MessageLog(
         lead_id=lead.id,
@@ -117,7 +127,7 @@ def send_sms(
         channel=MessageChannel.SMS,
         direction=MessageDirection.OUTBOUND,
         to_number=phone.number,
-        from_number=sms_from_number(db),
+        from_number=None,
         subject=None,
         body=body,
         template_id=template.id if template else None,
@@ -126,8 +136,23 @@ def send_sms(
     db.add(entry)
     db.flush()
 
+    if provider == "quo":
+        from app.services import quo
+        try:
+            sent = quo.send_message(db, sender, phone.number, body)
+        except quo.QuoError as exc:
+            entry.status = "failed"
+            db.flush()
+            raise RuntimeError(f"Quo SMS failed: {exc}") from exc
+        entry.twilio_sid = sent["id"]  # provider message ID (column predates Quo)
+        entry.from_number = sent["from"]
+        entry.status = "sent"
+        db.flush()
+        return entry
+
     client = get_sms_client(db)
     from_number = sms_from_number(db)
+    entry.from_number = from_number or None
     if client and from_number:
         try:
             msg = client.messages.create(

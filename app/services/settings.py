@@ -391,13 +391,16 @@ def get_twilio_config(db: Session) -> dict:
 CALLING_PROVIDERS = ("quo", "twilio")
 
 
-def get_calling_provider(db: Session) -> str:
-    """Active calling provider: 'quo', 'twilio', or 'dry-run'.
+def get_calling_provider(db: Session, user=None) -> str:
+    """Active calling provider for ``user``: 'quo', 'twilio', or 'dry-run'.
 
-    An explicit ``calling_provider`` setting wins.  Otherwise Quo is used when
-    its API key is set, then Twilio when fully configured, else a dry-run that
-    still logs calls so the pipeline works end-to-end in dev.
+    A caller with a personal Quo key always uses Quo.  Otherwise an explicit
+    ``calling_provider`` setting wins, then Quo when the company key is set,
+    then Twilio when fully configured, else a dry-run that still logs calls so
+    the pipeline works end-to-end in dev.
     """
+    if user is not None and (getattr(user, "quo_api_key", None) or "").strip():
+        return "quo"
     explicit = (get_setting(db, "calling_provider") or "").strip().lower()
     if explicit in CALLING_PROVIDERS:
         return explicit

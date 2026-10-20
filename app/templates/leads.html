@@ -109,11 +109,18 @@ function addLeadModal() {
     </div>
     <div class="form-group"><label class="form-label">ZIP</label><input class="form-input" id="nl-zip"></div>
     <div class="form-group"><label class="form-label">Owner Name</label><input class="form-input" id="nl-owner"></div>
+    <div class="form-group"><label class="form-label">Owner Email</label><input class="form-input" id="nl-email" type="email" placeholder="owner@example.com"></div>
     <div class="grid-2">
       <div class="form-group"><label class="form-label">Beds</label><input class="form-input" id="nl-beds" type="number"></div>
       <div class="form-group"><label class="form-label">Sqft</label><input class="form-input" id="nl-sqft" type="number"></div>
     </div>
-    <div class="form-group"><label class="form-label">Assessed Value</label><input class="form-input" id="nl-assessed" type="number"></div>`;
+    <div class="form-group"><label class="form-label">Assessed Value</label><input class="form-input" id="nl-assessed" type="number"></div>
+    <div class="form-group"><label class="form-label">Rehab Level</label><select class="form-select" id="nl-rehab">
+      <option value="">—</option>
+      <option value="light">Light Cosmetic</option>
+      <option value="cosmetic_plus">Cosmetic + Kitchen/Baths</option>
+      <option value="gut">Full Gut / Structural</option>
+    </select></div>`;
   const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
     <button class="btn btn-primary" onclick="submitNewLead()">Save Lead</button>`;
   openModal("Add Lead", html, footer);
@@ -126,9 +133,11 @@ async function submitNewLead() {
     property_state: document.getElementById("nl-state").value || null,
     property_zip: document.getElementById("nl-zip").value || null,
     owner_name: document.getElementById("nl-owner").value || "",
+    owner_email: document.getElementById("nl-email").value.trim() || null,
     beds: parseInt(document.getElementById("nl-beds").value) || null,
     sqft: parseInt(document.getElementById("nl-sqft").value) || null,
     assessed_value: parseFloat(document.getElementById("nl-assessed").value) || null,
+    rehab_level: document.getElementById("nl-rehab").value || null,
   };
   if (!body.property_address) { toast("Address required", "error"); return; }
   try {

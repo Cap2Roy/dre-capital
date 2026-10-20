@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Call, CallFlow, CallOutcome, Lead, ListType
+from app.timeutil import iso_utc
 
 # ── Topic classification ────────────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ def build_call_guide(db: Session, lead: Lead, flow: Optional[CallFlow] = None) -
         if c.call_flow_id != flow.id or not c.answers:
             continue
         for idx, ans in json.loads(c.answers).items():
-            prior_answers.setdefault(idx, {"answer": ans, "at": c.created_at.isoformat() if c.created_at else None})
+            prior_answers.setdefault(idx, {"answer": ans, "at": iso_utc(c.created_at)})
 
     unfilled: set[str] = set()
     role, u = fill(flow.role, values); unfilled.update(u)

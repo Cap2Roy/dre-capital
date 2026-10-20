@@ -2,9 +2,19 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer, field_validator, model_validator
+
+from app.timeutil import iso_utc, to_naive_utc
+
+# Every API datetime: inputs normalized to naive UTC (storage convention),
+# JSON output rendered as ISO-8601 with an explicit 'Z'.
+UTCDateTime = Annotated[
+    datetime,
+    AfterValidator(to_naive_utc),
+    PlainSerializer(iso_utc, return_type=str, when_used="json"),
+]
 
 
 class ORMBase(BaseModel):
@@ -43,7 +53,7 @@ class CompOut(ORMBase):
     sqft: Optional[int] = None
     beds: Optional[int] = None
     baths: Optional[float] = None
-    sold_date: Optional[datetime] = None
+    sold_date: Optional[UTCDateTime] = None
     distance_miles: Optional[float] = None
     price_per_sqft: Optional[float] = None
     is_renovated: bool
@@ -58,7 +68,7 @@ class ValuationOut(ORMBase):
     notes: Optional[str] = None
     comps_provider: Optional[str] = None
     comps_is_mock: bool = False
-    created_at: datetime
+    created_at: UTCDateTime
 
 class CallOut(ORMBase):
     id: str
@@ -73,7 +83,7 @@ class CallOut(ORMBase):
     lead_score: Optional[str] = None
     ai_summary: Optional[str] = None
     transcript: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
     @field_validator("answers", mode="before")
     @classmethod
@@ -93,7 +103,7 @@ class CallInitiateOut(CallOut):
 
 class FollowUpOut(ORMBase):
     id: str
-    due_at: datetime
+    due_at: UTCDateTime
     reason: Optional[str] = None
     done: bool
 
@@ -107,7 +117,7 @@ class ContractOut(ORMBase):
     assignment_fee: float
     buyer_price: Optional[float] = None
     status: str
-    signed_at: Optional[datetime] = None
+    signed_at: Optional[UTCDateTime] = None
     disclosure_sent: bool
 
     @model_validator(mode="wrap")
@@ -143,9 +153,9 @@ class LeadOut(ORMBase):
     taxes_owed: Optional[float] = None
     status: str
     stack_depth: int
-    next_followup: Optional[datetime] = None
+    next_followup: Optional[UTCDateTime] = None
     notes: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
     phones: list[PhoneOut] = []
     comps: list[CompOut] = []
     valuations: list[ValuationOut] = []
@@ -178,7 +188,7 @@ class LeadCreate(BaseModel):
 class LeadUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
-    next_followup: Optional[datetime] = None
+    next_followup: Optional[UTCDateTime] = None
 
 
 class LeadAssign(BaseModel):
@@ -316,7 +326,7 @@ class ContractCreate(BaseModel):
 # ── Follow-ups ─────────────────────────────────────────────────────────────
 
 class FollowUpCreate(BaseModel):
-    due_at: datetime
+    due_at: UTCDateTime
     reason: Optional[str] = None
 
 
@@ -329,7 +339,7 @@ class SourceListOut(ORMBase):
     county: Optional[str] = None
     state: Optional[str] = None
     record_count: int
-    imported_at: datetime
+    imported_at: UTCDateTime
 
 # ── Scraper ──────────────────────────────────────────────────────────────────
 
@@ -366,7 +376,7 @@ class ScrapeSourceOut(ORMBase):
     search_params: Optional[str] = None
     active: bool
     auto_scrape: bool = False
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class ScrapeJobCreate(BaseModel):
@@ -393,9 +403,9 @@ class ScrapeJobOut(ORMBase):
     skipped: int
     error_message: Optional[str] = None
     llm_summary: Optional[str] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    created_at: datetime
+    started_at: Optional[UTCDateTime] = None
+    completed_at: Optional[UTCDateTime] = None
+    created_at: UTCDateTime
 
 
 class ScrapeImportRequest(BaseModel):
@@ -414,7 +424,7 @@ class MessageTemplateOut(ORMBase):
     subject: Optional[str] = None
     body: str
     active: bool
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class MessageTemplateCreate(BaseModel):
@@ -449,7 +459,7 @@ class CallFlowOut(ORMBase):
     scoring: dict = {}
     is_default: bool
     active: bool
-    created_at: datetime
+    created_at: UTCDateTime
 
     @field_validator("questions", "rules", mode="before")
     @classmethod
@@ -513,7 +523,7 @@ class MessageLogOut(ORMBase):
     status: Optional[str] = None
     template_id: Optional[str] = None
     sent_by: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class SendSmsRequest(BaseModel):
@@ -534,18 +544,18 @@ class MeetingOut(ORMBase):
     id: str
     lead_id: Optional[str] = None
     title: str
-    scheduled_at: datetime
+    scheduled_at: UTCDateTime
     location: Optional[str] = None
     notes: Optional[str] = None
     reminder_minutes: int
     reminder_sent: bool
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class MeetingCreate(BaseModel):
     lead_id: Optional[str] = None
     title: str
-    scheduled_at: datetime
+    scheduled_at: UTCDateTime
     location: Optional[str] = None
     notes: Optional[str] = None
     reminder_minutes: int = 60

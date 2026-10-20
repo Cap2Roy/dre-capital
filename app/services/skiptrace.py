@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import hashlib
 import random
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Lead, Phone, PhoneQuality
+from app.timeutil import utcnow
 
 # A small, stable fake DNC "registry" for the mock provider.  In production
 # this is the federal DNC list scrub.  Numbers whose last 4 digits hash into
@@ -109,7 +109,7 @@ def _mock_provider(lead: Lead) -> list[dict]:
 def mark_opted_out(db: Session, phone: Phone) -> Phone:
     """Instantly honor an opt-out and log it."""
     phone.opted_out = True
-    phone.opted_out_at = datetime.now()
+    phone.opted_out_at = utcnow()
     phone.quality = PhoneQuality.OPTED_OUT
     db.flush()
     return phone

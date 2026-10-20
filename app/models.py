@@ -123,6 +123,11 @@ class User(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(40), default="acquisitions")  # acquisitions | manager | admin
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Personal Quo line (optional) — overrides the company key for this caller's
+    # calls, texts, and syncs.  Never returned by the API.
+    quo_api_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    quo_phone_number_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    quo_from_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Relations
     calls: Mapped[list["Call"]] = relationship(back_populates="caller")
 

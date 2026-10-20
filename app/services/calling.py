@@ -41,8 +41,10 @@ def initiate_call(
             f"Phone {phone.number} is DNC-flagged or opted out. Mail only."
         )
 
+    from app.models import User
     from app.services.settings import get_calling_provider, get_twilio_config
-    provider = get_calling_provider(db)
+    caller = db.get(User, caller_id) if caller_id else None
+    provider = get_calling_provider(db, caller)
     call_sid: Optional[str] = None
 
     if provider == "twilio":
@@ -113,7 +115,9 @@ def log_call_outcome(
     the call-guide responses keyed by question index; ``lead_score`` is the
     Hot/Warm/Cold rubric result.
     """
-    from datetime import datetime, timedelta
+    from datetime import timedelta
+
+    from app.timeutil import utcnow
 
     call.outcome = outcome
     call.notes = notes
@@ -168,7 +172,7 @@ def log_call_outcome(
     if days:
         followup = FollowUp(
             lead_id=lead.id,
-            due_at=datetime.now() + timedelta(days=days),
+            due_at=utcnow() + timedelta(days=days),
             reason=f"Follow up after: {outcome.value}",
         )
         db.add(followup)

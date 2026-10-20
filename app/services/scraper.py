@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -41,6 +40,7 @@ from app.services.stacking import (
     get_or_create_lead,
     recompute_stack_depths,
 )
+from app.timeutil import utcnow
 
 # ── Source directory ──────────────────────────────────────────────────────────
 # Pre-configured, known-working public property data sources that users can
@@ -700,7 +700,7 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
     """
     source = job.source
     job.status = ScrapeJobStatus.RUNNING
-    job.started_at = datetime.utcnow()
+    job.started_at = utcnow()
     db.commit()
 
     try:
@@ -749,12 +749,12 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
         job.llm_summary = llm_summarize_scrape(records)
 
         job.status = ScrapeJobStatus.COMPLETED
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utcnow()
 
     except Exception as exc:
         job.status = ScrapeJobStatus.FAILED
         job.error_message = _friendly_error(exc, source.source_type, source.url)
-        job.completed_at = datetime.utcnow()
+        job.completed_at = utcnow()
 
     db.commit()
 
@@ -840,7 +840,7 @@ def import_scrape_results(
         raise ValueError("No results found to import.")
 
     # Create or reuse source list
-    name = list_name or f"Scrape Import {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+    name = list_name or f"Scrape Import {utcnow().strftime('%Y-%m-%d %H:%M')} UTC"
     source_list = SourceList(
         name=name,
         list_type=lt,

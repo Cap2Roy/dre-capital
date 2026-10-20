@@ -360,7 +360,7 @@
       }
       el.innerHTML = jobs.map(j => {
         const statusClass = j.status === 'completed' ? 'badge-ok' : j.status === 'failed' ? 'badge-danger' : j.status === 'running' ? 'badge-warn' : 'badge-muted';
-        const date = new Date(j.created_at).toLocaleString();
+        const date = parseApiDate(j.created_at).toLocaleString();
         return `
           <div class="job-item" data-id="${j.id}" onclick="showResults('${j.id}')" style="cursor:pointer; padding:10px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px;">
             <div class="job-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">

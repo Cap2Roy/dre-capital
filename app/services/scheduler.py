@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
@@ -105,6 +105,11 @@ async def scheduler_loop() -> None:
 
                 if not _auto_scrape_enabled(db):
                     continue
+                # Deliberate exception to the naive-UTC rule: ``auto_scrape_hour``
+                # is a wall-clock LOCAL hour and ``last_auto_scrape_date`` is a
+                # local calendar-day key (not a timestamp), so both use local
+                # time. Job started_at/completed_at are stored as naive UTC by
+                # run_scrape_job.
                 now = datetime.now()
                 target_hour = _auto_scrape_hour(db)
                 today_key = now.strftime("%Y-%m-%d")

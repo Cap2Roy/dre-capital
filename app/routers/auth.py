@@ -190,3 +190,74 @@ def change_password(body: ChangePasswordRequest, request: Request):
         return {"ok": True}
     finally:
         db.close()
+
+
+# ── Personal Quo line ─────────────────────────────────────────────────────────
+
+class QuoKeyRequest(BaseModel):
+    api_key: str | None = None            # new key; omit/blank to keep the current one
+    phone_number_id: str | None = None    # PN…; blank = auto-detect
+    remove: bool = False                  # true = delete the personal key (fall back to company)
+
+
+def _quo_profile(db: Session, user: User) -> dict:
+    from app.services import quo
+    return {
+        "has_personal_key": bool(quo.personal_key(user)),
+        "company_key_set": bool(quo.company_key(db)),
+        "phone_number_id": user.quo_phone_number_id or "",
+        "from_number": user.quo_from_number or "",
+    }
+
+
+@router.get("/me/quo")
+def get_my_quo(request: Request, db: Session = Depends(get_db)):
+    """Whether the current user has their own Quo line (the key is never returned)."""
+    user = get_current_user_from_request(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return _quo_profile(db, user)
+
+
+@router.put("/me/quo")
+def set_my_quo(body: QuoKeyRequest, request: Request, db: Session = Depends(get_db)):
+    """Save, change, or remove the current user's personal Quo key.
+
+    A new key is verified against Quo before it's stored; then the line is
+    detected and (on a public deployment) auto-sync webhooks are registered.
+    """
+    from app.services import quo
+    user = get_current_user_from_request(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if body.remove:
+        user.quo_api_key = user.quo_phone_number_id = user.quo_from_number = None
+        db.commit()
+        return {**_quo_profile(db, user), "message": "Personal Quo key removed — using the company line."}
+
+    new_key = (body.api_key or "").strip()
+    if new_key and set(new_key) != {"\u2022"}:
+        try:
+            quo.list_phone_numbers(new_key)  # reject bad keys before saving
+        except quo.QuoError as exc:
+            raise HTTPException(status_code=400, detail=f"Quo didn't accept that key: {exc}")
+        user.quo_api_key = new_key
+        user.quo_from_number = None  # re-detect the line for the new key
+    if not quo.personal_key(user):
+        raise HTTPException(status_code=400, detail="Enter your Quo API key.")
+    if body.phone_number_id is not None:
+        user.quo_phone_number_id = body.phone_number_id.strip() or None
+        user.quo_from_number = None
+
+    try:
+        line = quo.resolve_line(db, user)
+    except quo.QuoError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        hooks = quo.register_webhooks(db, get_settings().app_base_url, user)
+    except quo.QuoError as exc:
+        hooks = {"registered": 0, "skipped": f"Auto-sync not enabled: {exc}"}
+    db.commit()
+    return {**_quo_profile(db, user), "line": line, "auto_sync": hooks}

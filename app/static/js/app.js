@@ -71,14 +71,23 @@ function fmtMoneyK(n) {
   if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(0) + "k";
   return "$" + n.toFixed(0);
 }
+// API datetimes are UTC ("...Z"). Defensively treat an offset-less ISO
+// datetime as UTC too (older data), and bare dates ("YYYY-MM-DD") as local days.
+function parseApiDate(iso) {
+  if (iso instanceof Date) return iso;
+  const s = String(iso);
+  if (/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) return new Date(s + "Z");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s + "T00:00:00");
+  return new Date(s);
+}
 function fmtDate(iso) {
   if (!iso) return "—";
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 function fmtDateTime(iso) {
   if (!iso) return "—";
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
     " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
@@ -89,7 +98,18 @@ function fmtPhone(num) {
 }
 function daysFromNow(iso) {
   if (!iso) return null;
-  return Math.ceil((new Date(iso) - new Date()) / 86400000);
+  return Math.ceil((parseApiDate(iso) - new Date()) / 86400000);
+}
+// <input type="datetime-local"> holds a local wall-clock value with no zone.
+// Prefill from an API (UTC) datetime, and send back as UTC ISO with 'Z'.
+function toDatetimeLocalValue(iso) {
+  if (!iso) return "";
+  const d = parseApiDate(iso);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fromDatetimeLocalValue(value) {
+  return value ? new Date(value).toISOString() : null;
 }
 
 function stackBadge(depth) {

@@ -1,8 +1,6 @@
 """Meetings router: schedule lead appointments + send reminder notifications."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +9,7 @@ from app.database import get_db
 from app.models import Meeting
 from app.schemas import MeetingCreate, MeetingOut
 from app.services.meetings import process_due_reminders, send_meeting_reminder
+from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -20,7 +19,7 @@ def list_meetings(upcoming: bool = False, db: Session = Depends(get_db)):
     """List meetings, optionally only upcoming (scheduled_at >= now)."""
     q = select(Meeting).order_by(Meeting.scheduled_at.asc())
     if upcoming:
-        q = q.where(Meeting.scheduled_at >= datetime.now())
+        q = q.where(Meeting.scheduled_at >= utcnow())
     return db.execute(q).scalars().all()
 
 
@@ -42,7 +41,7 @@ def update_meeting(meeting_id: str, payload: MeetingCreate, db: Session = Depend
     for k, v in payload.model_dump().items():
         setattr(meeting, k, v)
     # Reopen the reminder window only when the meeting moved to a future time.
-    if meeting.scheduled_at != old_when and meeting.scheduled_at > datetime.now():
+    if meeting.scheduled_at != old_when and meeting.scheduled_at > utcnow():
         meeting.reminder_sent = False
     db.commit()
     db.refresh(meeting)

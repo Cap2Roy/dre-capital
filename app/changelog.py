@@ -19,9 +19,27 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.2.0"
+CURRENT_VERSION = "2.3.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.3.0",
+        "date": "2026-10-21",
+        "title": "Personal Quo lines, Quo texting, auto-sync, correct times",
+        "sections": {
+            "Added": [
+                "My Quo Line (Settings → Profile): every user can add their own Quo API key to call and text from their own Quo number. The key is verified with Quo before saving and never shown again; without one, the company line is used.",
+                "Texts (manual, no-answer follow-ups, meeting reminders) go out through Quo when Quo is your calling provider, so sellers see the same number you call from.",
+                "Quo auto-sync: signed Quo webhooks fill in call duration, AI summary, and transcript automatically after you hang up, and STOP replies to Quo texts opt the number out. Re-arms itself on every restart; 'Enable Auto-Sync' button in Settings.",
+                "Add Lead form now captures owner email and rehab level.",
+            ],
+            "Fixed": [
+                "Dates and times were off by several hours — every timestamp is now stored in UTC and shown in your local time.",
+                "Production deploys no longer wipe environment settings or log everyone out; the company Quo key lives in Secret Manager; the service runs a single instance so every user sees the same data.",
+                "The API's reported version no longer said 2.0.0.",
+            ],
+        },
+    },
     {
         "version": "2.2.0",
         "date": "2026-10-21",

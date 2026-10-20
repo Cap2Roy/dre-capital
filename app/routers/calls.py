@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Call, CallFlow, CallOutcome, Lead, Phone
+from app.models import Call, CallFlow, CallOutcome, Lead, Phone, User
 from app.schemas import CallInitiateOut, CallInitiateRequest, CallLogRequest, CallOut, NoAnswerSmsRequest
 from app.services.calling import initiate_call, log_call_outcome
 from app.services.messaging import send_sms
@@ -18,18 +18,70 @@ router = APIRouter(prefix="/api/calls", tags=["calls"])
 _SCORES = {"hot", "warm", "cold"}
 
 
+def _current_user(request: Request, db: Session) -> User | None:
+    """The logged-in user bound to this request's session (middleware's copy is detached)."""
+    user = getattr(request.state, "user", None)
+    return db.get(User, user.id) if user else None
+
+
 @router.get("/provider")
-def calling_provider(check: bool = False, db: Session = Depends(get_db)):
-    """Active calling provider + the default operator number (for the Twilio bridge
-    prompt).  ``check=true`` also tests the Quo connection live."""
+def calling_provider(request: Request, check: bool = False, db: Session = Depends(get_db)):
+    """The caller's active provider, whether their Quo line is personal or the
+    company's, and the default operator number (Twilio bridge prompt).
+    ``check=true`` also tests the Quo connection live."""
+    from app.services.quo import personal_key
     from app.services.settings import get_calling_provider, get_setting
-    provider = get_calling_provider(db)
-    out: dict = {"provider": provider, "operator_number": get_setting(db, "operator_number") or ""}
+    user = _current_user(request, db)
+    provider = get_calling_provider(db, user)
+    out: dict = {
+        "provider": provider,
+        "quo_line": "personal" if personal_key(user) else ("company" if provider == "quo" else None),
+        "operator_number": get_setting(db, "operator_number") or "",
+    }
     if check and provider == "quo":
         from app.services.quo import connection_status
-        out["quo"] = connection_status(db)
+        out["quo"] = connection_status(db, user)
         db.commit()  # persist an auto-detected line
     return out
+
+
+@router.post("/quo-webhook")
+async def quo_webhook(request: Request, db: Session = Depends(get_db)):
+    """Quo event receiver (public; authenticated by the openphone-signature HMAC).
+
+    call.completed / call.summary.completed / call.transcript.completed fill in
+    the CRM call automatically; message.received honors STOP opt-outs.
+    """
+    from app.services import quo
+    raw = await request.body()
+    if not quo.verify_signature(db, request.headers.get("openphone-signature"), raw):
+        raise HTTPException(401, "Invalid Quo signature")
+    try:
+        import json
+        event = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400, "Invalid JSON")
+    result = quo.handle_event(db, event)
+    db.commit()
+    return result
+
+
+@router.post("/quo/webhooks")
+def register_quo_webhooks(request: Request, db: Session = Depends(get_db)):
+    """Turn on Quo auto-sync for the company key (admin) — idempotent."""
+    user = _current_user(request, db)
+    if not user or user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from app.config import get_settings
+    from app.services import quo
+    if not quo.company_key(db):
+        raise HTTPException(400, "Set the company Quo API key first.")
+    try:
+        result = quo.register_webhooks(db, get_settings().app_base_url)
+    except quo.QuoError as exc:
+        raise HTTPException(502, str(exc))
+    db.commit()
+    return result
 
 
 @router.post("/initiate", response_model=CallInitiateOut)
@@ -170,7 +222,7 @@ def no_answer_quick_click(
             ).scalars().first()
         if template is not None:
             try:
-                sms_sent = send_sms(db, lead, phone, template=template)
+                sms_sent = send_sms(db, lead, phone, template=template, sent_by=call.caller_id)
             except (ValueError, RuntimeError):
                 # SMS failure must not block the dial queue from advancing.
                 sms_sent = None

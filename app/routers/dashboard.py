@@ -1,7 +1,7 @@
 """Dashboard router: pipeline overview stats + call queue."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select
 from fastapi import APIRouter, Depends
@@ -10,14 +10,19 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Call, FollowUp, Lead, LeadStatus, Phone
 from app.schemas import DashboardStats
+from app.timeutil import iso_utc, to_naive_utc
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("", response_model=DashboardStats)
 def dashboard(db: Session = Depends(get_db)):
-    today = datetime.now().date()
-    today_start = datetime.combine(today, datetime.min.time())
+    # "Today" is inherently a local calendar day (the server's zone — UTC on
+    # Cloud Run). Convert its local-midnight bounds to naive UTC to compare
+    # against stored naive-UTC timestamps.
+    today = date.today()
+    today_start = to_naive_utc(datetime.combine(today, time.min).astimezone())
+    tomorrow_start = to_naive_utc(datetime.combine(today + timedelta(days=1), time.min).astimezone())
 
     total = db.execute(select(func.count(Lead.id))).scalar() or 0
     new = db.execute(select(func.count(Lead.id)).where(Lead.status == LeadStatus.NEW)).scalar() or 0
@@ -28,7 +33,6 @@ def dashboard(db: Session = Depends(get_db)):
     calls_today = db.execute(
         select(func.count(Call.id)).where(Call.created_at >= today_start)
     ).scalar() or 0
-    tomorrow_start = datetime.combine(today + timedelta(days=1), datetime.min.time())
     followups_today = db.execute(
         select(func.count(FollowUp.id)).where(
             FollowUp.due_at >= today_start,
@@ -83,7 +87,7 @@ def call_queue(db: Session = Depends(get_db)):
             "stack_depth": lead.stack_depth,
             "tier": "today" if lead.stack_depth >= 3 else "this_week",
             "status": lead.status.value if lead.status else "new",
-            "next_followup": lead.next_followup.isoformat() if lead.next_followup else None,
+            "next_followup": iso_utc(lead.next_followup),
             "has_callable_phone": True,
             "call_count": len(lead.calls),
             "phone_preview": callable_phones[0].number[-4:] if callable_phones else None,

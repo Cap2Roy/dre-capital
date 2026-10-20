@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Meeting, MessageTemplate
 from app.services.messaging import send_sms
+from app.timeutil import utcnow
 
 
 _LATE_GRACE_HOURS = 6  # a reminder may fire at most ~6h after the meeting start
@@ -32,7 +33,7 @@ def find_due_reminders(db: Session, now: Optional[datetime] = None) -> list[Meet
     not long past (within ``_LATE_GRACE_HOURS`` of start).  Meetings past their
     late expiry are skipped so a stale meeting never triggers a late SMS.
     """
-    now = now or datetime.now()
+    now = now or utcnow()
     late_cutoff = now - timedelta(hours=_LATE_GRACE_HOURS)
     return db.execute(
         select(Meeting).where(
@@ -94,7 +95,7 @@ def send_meeting_reminder(db: Session, meeting: Meeting, sent_by: Optional[str] 
 
 def process_due_reminders(db: Session, now: Optional[datetime] = None) -> dict:
     """Send reminders for every meeting whose window has opened. Batch entry."""
-    now = now or datetime.now()
+    now = now or utcnow()
     sent = skipped = 0
     for m in find_due_reminders(db, now):
         if not _reminder_is_due(m, now):

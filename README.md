@@ -17,7 +17,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. Pluggable comps provider seam (mock by default; real RentCast/MLS drops in). |
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
-| **Text the owner** | SMS via Twilio — template CRUD, manual send, inbound webhook logging, **STOP-keyword auto opt-out** for DNC compliance. |
+| **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
 | **Schedule & remind** | Meeting scheduling + **reminder notifications** (SMS, fired by the scheduler before each meeting). **Area-focus** setting defaults the dial queue to a primary state (MI). |
@@ -28,7 +28,7 @@ The platform encodes the manual's daily loop end-to-end:
 - **Database**: SQLite (dev) / Cloud SQL Postgres (prod) — same ORM layer
 - **Frontend**: Server-rendered Jinja2 + vanilla JS, custom design system
 - **Telephony**: Quo (formerly OpenPhone — click-to-call into the Quo app, then sync duration / AI summary / transcript via the Quo API) or Twilio (operator-first bridge). Manual-dial only — the operator talks live, never an autodialer.
-- **Deploy**: Docker → Google Cloud Run + Cloud SQL Postgres + Secret Manager
+- **Deploy**: Docker → Google Cloud Run (single instance, in-container SQLite) + Secret Manager
 
 ## Quick Start (Local)
 
@@ -67,29 +67,35 @@ skip-trace provider, or Cloud SQL Postgres.
 ```bash
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
-./deploy/deploy.sh
+PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh                       # code-only redeploy
+QUO_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh       # set/rotate the company Quo key
 ```
 
 The script:
-1. Enables Cloud Run, SQL Admin, Secret Manager, Build APIs
-2. Creates a Cloud SQL Postgres instance (`db-f1-micro`, Postgres 16)
-3. Stores the DB URL + secret key in Secret Manager
-4. Builds the container via Cloud Build
-5. Deploys to Cloud Run with Cloud SQL connection + secrets
+1. Enables Cloud Run, Cloud Build, and Secret Manager APIs
+2. Creates the session secret once (never rotated by redeploys), and stores the company
+   Quo key in Secret Manager when `QUO_API_KEY` is exported
+3. Builds the container via Cloud Build (`.gcloudignore` keeps local DBs/secrets out)
+4. Deploys to Cloud Run pinned to **one instance**, **updating** env vars — only the
+   variables you export change (e.g. `GOOGLE_CLIENT_ID`, `RENTCAST_API_KEY`,
+   `TWILIO_*`, `CALLING_PROVIDER`); everything else keeps its current value
 
-After deploy, add Twilio credentials for live calling:
-```bash
-gcloud run services update dre-capital --region us-central1 \
-  --set-env-vars TWILIO_ACCOUNT_SID=AC...,TWILIO_AUTH_TOKEN=...,TWILIO_FROM_NUMBER=+1...
-```
+**Storage caveat:** the database is SQLite inside the container. It's recreated (with
+demo data) on every deploy/restart, so leads, calls, and *personal* Quo keys saved in the
+UI don't survive a redeploy. The session key and company Quo key do (Secret Manager).
+Moving to Cloud SQL Postgres (`DATABASE_URL=postgresql+psycopg2://…`) makes everything
+persistent; the code already supports it.
+
+On start the app re-registers its Quo webhooks (`/api/calls/quo-webhook`, HMAC-verified)
+so call results, AI summaries, transcripts, and STOP replies sync automatically.
 
 ## Compliance (Hard Rules from the Manual)
 
 - **DNC scrub**: every list is scrubbed against the federal Do-Not-Call registry.
   DNC-flagged numbers are **mail only** — the call button is disabled and a red
   badge appears.
-- **Manual-dial only**: the system uses Twilio click-to-call (operator clicks once
-  per call, talks live). No autodialer, no prerecorded messages, no power dialer.
+- **Manual-dial only**: Quo click-to-call opens the number in the Quo app and the operator
+  presses Call; Twilio rings the operator first. No autodialer, no prerecorded messages.
 - **Instant opt-out**: when a seller says stop, the phone is flagged `opted_out`
   immediately and logged. The call button is permanently disabled for that number.
 - **State rules**: Texas-specific assignment disclosure is built into the
@@ -115,6 +121,10 @@ POST /api/calls/initiate          — click-to-call (compliant)
 POST /api/calls/{id}/log          — log outcome + call-guide answers + Hot/Warm/Cold score + auto-followup
 GET  /api/calls/provider          — active calling provider (?check=true tests Quo live)
 POST /api/calls/{id}/sync         — pull duration, AI summary, transcript from Quo
+POST /api/calls/quo-webhook       — Quo events (public, openphone-signature HMAC)
+POST /api/calls/quo/webhooks      — enable Quo auto-sync for the company key (admin)
+GET  /api/auth/me/quo             — my Quo line status (key never returned)
+PUT  /api/auth/me/quo             — save / change / remove my personal Quo key
 GET  /api/call-flows/guide/{lead_id} — call flow adapted to one property (facts on record, tips, prior answers)
 POST /api/call-flows/score        — Hot/Warm/Cold from answers (rubric + valuation)
 POST /api/leads/{id}/skiptrace    — run skip trace for a lead

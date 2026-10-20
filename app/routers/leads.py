@@ -1,7 +1,6 @@
 """Leads router: CRUD, filtering, detail, follow-ups, notes."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.database import get_db
 from app.models import FollowUp, Lead, LeadStatus, ListType
 from app.schemas import FollowUpCreate, LeadCreate, LeadOut, LeadUpdate
+from app.timeutil import iso_utc
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -70,7 +70,7 @@ def list_leads(
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     leads = db.execute(stmt).scalars().all()
     return {
-        "leads": [LeadOut.model_validate(l).model_dump() for l in leads],
+        "leads": [LeadOut.model_validate(l).model_dump(mode="json") for l in leads],
         "total": total_count,
         "page": page,
         "page_size": page_size,
@@ -151,17 +151,17 @@ def lead_timeline(lead_id: str, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
-    events = []
+    events = []  # (sort key: naive-UTC datetime, event dict)
     for c in lead.calls:
-        events.append({"type": "call", "at": c.created_at.isoformat(), "outcome": c.outcome.value,
-                       "attempt": c.attempt_count, "notes": c.notes})
+        events.append((c.created_at, {"type": "call", "outcome": c.outcome.value,
+                                      "attempt": c.attempt_count, "notes": c.notes}))
     for f in lead.followups:
-        events.append({"type": "followup", "at": f.due_at.isoformat(), "reason": f.reason, "done": f.done})
+        events.append((f.due_at, {"type": "followup", "reason": f.reason, "done": f.done}))
     for v in lead.valuations:
-        events.append({"type": "valuation", "at": v.created_at.isoformat(),
-                       "arv": v.arv, "mao": v.mao, "repairs": v.repair_estimate})
+        events.append((v.created_at, {"type": "valuation",
+                                      "arv": v.arv, "mao": v.mao, "repairs": v.repair_estimate}))
     for c in lead.contracts:
-        events.append({"type": "contract", "at": (c.signed_at or c.created_at).isoformat(),
-                       "status": c.status, "price": c.contract_price})
-    events.sort(key=lambda e: e["at"], reverse=True)
-    return {"events": events}
+        events.append((c.signed_at or c.created_at, {"type": "contract",
+                                                     "status": c.status, "price": c.contract_price}))
+    events.sort(key=lambda e: e[0], reverse=True)
+    return {"events": [{**ev, "at": iso_utc(at)} for at, ev in events]}

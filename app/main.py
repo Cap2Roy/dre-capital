@@ -21,15 +21,41 @@ from app.routers import (
 from app.services.scheduler import scheduler_loop
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/messages/inbound", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/messages/inbound", "/static"}
+
+
+def _register_quo_webhooks_on_startup() -> None:
+    """Re-arm Quo auto-sync for the company key on every start.
+
+    The signing keys live in the DB, which is recreated on each Cloud Run
+    restart; re-registering (idempotent — old CRM webhooks are replaced) keeps
+    signed deliveries verifiable.  No-ops without a key or a public HTTPS URL.
+    """
+    import logging
+    from app.config import get_settings
+    from app.database import SessionLocal
+    from app.services import quo
+    db = SessionLocal()
+    try:
+        if quo.company_key(db) and quo.public_base_url(get_settings().app_base_url):
+            result = quo.register_webhooks(db, get_settings().app_base_url)
+            db.commit()
+            logging.getLogger("uvicorn.error").info("Quo auto-sync webhooks registered: %s", result)
+    except Exception as exc:  # never block startup on a third-party API
+        db.rollback()
+        logging.getLogger("uvicorn.error").warning("Quo webhook registration failed: %s", exc)
+    finally:
+        db.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     scheduler_task = asyncio.create_task(scheduler_loop())
+    webhook_task = asyncio.create_task(asyncio.to_thread(_register_quo_webhooks_on_startup))
     yield
     scheduler_task.cancel()
+    webhook_task.cancel()
     try:
         await scheduler_task
     except asyncio.CancelledError:
@@ -39,7 +65,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DRE-Capital Property Pipeline",
     description="Wholesale real estate acquisitions pipeline for Direct Real Estate Capital.",
-    version="2.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
 

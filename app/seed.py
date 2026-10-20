@@ -14,7 +14,7 @@ Creates:
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 from sqlalchemy import select
 from app.database import SessionLocal, init_db
 
@@ -28,6 +28,7 @@ from app.services.stacking import add_lead_to_list, recompute_stack_depths
 from app.services.skiptrace import skip_trace_lead
 from app.services.valuation import mock_comps_for_lead, run_valuation
 from app.services.buyers import match_buyers_for_lead
+from app.timeutil import utcnow
 
 
 STREETS = ["Maple", "Oak", "Cedar", "Pine", "Elm", "Birch", "Walnut", "Magnolia", "Pecan", "Willow",
@@ -222,7 +223,7 @@ def run() -> None:
                     continue
                 if opted < 2 and lead.id == leads[5].id:
                     phone.opted_out = True
-                    phone.opted_out_at = datetime.now()
+                    phone.opted_out_at = utcnow()
                     phone.quality = PhoneQuality.OPTED_OUT
                     opted += 1
         db.flush()
@@ -240,8 +241,8 @@ def run() -> None:
         # Mark a few leads warm + schedule follow-ups
         for lead in leads[:5]:
             lead.status = LeadStatus.WARM
-            lead.next_followup = datetime.now() + timedelta(days=1)
-            db.add(FollowUp(lead_id=lead.id, due_at=datetime.now() + timedelta(days=1), reason="Send offer"))
+            lead.next_followup = utcnow() + timedelta(days=1)
+            db.add(FollowUp(lead_id=lead.id, due_at=utcnow() + timedelta(days=1), reason="Send offer"))
         db.flush()
 
         # Log a few calls
@@ -342,7 +343,7 @@ def run() -> None:
                     assignment_fee=15000,
                     buyer_price=val.mao + 15000,
                     status="signed",
-                    signed_at=datetime.now() - timedelta(days=2),
+                    signed_at=utcnow() - timedelta(days=2),
                     disclosure_sent=True,
                     notes="Assignment contract. TX disclosure sent.",
                 )
@@ -379,7 +380,7 @@ def run() -> None:
                 db.add(Meeting(
                     lead_id=lead.id,
                     title=title,
-                    scheduled_at=datetime.now() + delta,
+                    scheduled_at=utcnow() + delta,
                     location=loc,
                     notes=f"Auto-seeded meeting for {lead.owner_name}",
                     reminder_minutes=120,
@@ -423,8 +424,8 @@ def run() -> None:
                     total_found=random.randint(20, 180),
                     imported=random.randint(5, 40),
                     skipped=random.randint(0, 20),
-                    started_at=datetime.now() - timedelta(days=1, hours=random.randint(0, 6)),
-                    completed_at=datetime.now() - timedelta(days=1),
+                    started_at=utcnow() - timedelta(days=1, hours=random.randint(0, 6)),
+                    completed_at=utcnow() - timedelta(days=1),
                 ))
             # One failed job to demo error handling.
             if len(sources) > 1:
@@ -434,8 +435,8 @@ def run() -> None:
                     search_params=sources[1].search_params,
                     total_found=0, imported=0, skipped=0,
                     error_message="Connection timed out reaching county server (mock seed).",
-                    started_at=datetime.now() - timedelta(days=2),
-                    completed_at=datetime.now() - timedelta(days=2),
+                    started_at=utcnow() - timedelta(days=2),
+                    completed_at=utcnow() - timedelta(days=2),
                 ))
 
         # ── Settings rows (sensible defaults, idempotent) ────────────────────

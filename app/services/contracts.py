@@ -94,7 +94,7 @@ def contract_context(db: Session, contract: Contract, party: str) -> dict:
 
 
 def _today() -> str:
-    from datetime import date
+    from datetime import date  # a document date is a local calendar day, not a stored timestamp
     return date.today().strftime("%B %d, %Y")
 
 
