@@ -51,11 +51,18 @@ def _register_quo_webhooks_on_startup() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Register Quo webhooks BEFORE serving: Cloud Run throttles CPU outside
+    # requests, so a background thread could stall and leave webhooks
+    # half-registered with no signing keys stored.  Capped so a slow Quo API
+    # can't block startup.
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_register_quo_webhooks_on_startup), timeout=45)
+    except asyncio.TimeoutError:
+        import logging
+        logging.getLogger("uvicorn.error").warning("Quo webhook registration timed out; continuing startup")
     scheduler_task = asyncio.create_task(scheduler_loop())
-    webhook_task = asyncio.create_task(asyncio.to_thread(_register_quo_webhooks_on_startup))
     yield
     scheduler_task.cancel()
-    webhook_task.cancel()
     try:
         await scheduler_task
     except asyncio.CancelledError:
