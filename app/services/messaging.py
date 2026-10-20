@@ -14,7 +14,7 @@ import re
 from typing import Optional
 
 from jinja2 import Template
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -71,19 +71,29 @@ def render_template(raw_body: str, lead: Lead) -> str:
 def _digits_only(number: Optional[str]) -> str:
     return re.sub(r"\D", "", number or "") if number else ""
 
+def _sql_digits(column):
+    """SQL expression stripping the usual phone punctuation from ``column``."""
+    expr = column
+    for ch in ("+", "-", " ", "(", ")", "."):
+        expr = func.replace(expr, ch, "")
+    return expr
+
+
 def find_phone_by_number(db: Session, number: str) -> Optional[Phone]:
-    """Resolve a normalized E.164 phone number to a Phone row (inbound SMS)."""
+    """Resolve an inbound number (any formatting) to a Phone row.
+
+    Exact stored match first; otherwise compare the last 10 digits on both
+    sides so "+1 (713) 555-1234", "7135551234" and "+17135551234" all match.
+    """
     cleaned = _digits_only(number)
     if not cleaned:
         return None
-    # Prefer an exact stored match, then a digits-only comparison so a
-    # provider's formatted inbound number still matches a stored row.
     phone = db.execute(
         select(Phone).where(Phone.number == number.strip())
     ).scalars().first()
     if phone is None:
         phone = db.execute(
-            select(Phone).where(_digits_only(Phone.number) == cleaned)
+            select(Phone).where(_sql_digits(Phone.number).like("%" + cleaned[-10:]))
         ).scalars().first()
     return phone
 
