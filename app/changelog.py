@@ -19,9 +19,28 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.4.0"
+CURRENT_VERSION = "2.5.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.5.0",
+        "date": "2026-10-21",
+        "title": "Talk to Sam live — Google Gemini Live voice agent",
+        "sections": {
+            "Added": [
+                "AI Test Call → 'Talk to Sam live': a real-time AI voice agent (Gemini Live on Vertex AI) runs your call flow in the browser. You play the seller over your microphone; the agent answers in natural speech, follows the questions in order, and stops talking when you interrupt.",
+                "Live transcript as you talk, mic level meter, mute, and end call; 30 voices to choose from; optional property to rehearse (uses that lead's facts on record, never our offer numbers).",
+                "After the call: one recording with both voices (seekable), the full transcript, and an automatic Hot/Warm/Cold score with reasons, agreed callback time, and next steps based on the flow's rubric.",
+                "Settings → Live AI Agent (Google Gemini Live · Vertex AI): model, default voice, region, and a readiness check. Runs on the app's Google Cloud service account — no API key needed.",
+            ],
+            "Changed": [
+                "The Bland AI phone test call stays available below the live agent for when a Bland key is added.",
+            ],
+            "Fixed": [
+                "Browsers kept old styles/scripts after an update — static files are now versioned per release.",
+            ],
+        },
+    },
     {
         "version": "2.4.0",
         "date": "2026-10-21",

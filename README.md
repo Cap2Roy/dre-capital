@@ -18,7 +18,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
-| **Rehearse with AI** | **AI Test Call** (Bland AI): an AI voice agent calls *your* phone and speaks a call flow — listen live in the browser, hang up from the CRM, replay the recording with transcript + summary. Optionally rehearses a specific property's facts. Test-only: lead numbers are blocked (AI-voice calls to sellers need prior written consent). |
+| **Rehearse with AI** | **Talk to Sam live** (Google **Gemini Live on Vertex AI**): a real-time voice agent runs your call flow in the browser — you play the seller over your mic, interrupt freely, watch the live transcript, then get the recording, transcript, and an automatic Hot/Warm/Cold score. Uses the app's Google Cloud service account (no API key). Optional **phone test call** via Bland AI (needs a Bland key; lead numbers blocked — AI-voice calls to sellers need prior written consent). |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
 | **Schedule & remind** | Meeting scheduling + **reminder notifications** (SMS, fired by the scheduler before each meeting). **Area-focus** setting defaults the dial queue to a primary state (MI). |
@@ -133,6 +133,8 @@ GET  /api/ai-calls/{id}           — status, duration, transcript, summary (ref
 POST /api/ai-calls/{id}/listen    — live audio WebSocket URL (PCM16 LE, 16 kHz mono)
 POST /api/ai-calls/{id}/stop      — hang up
 GET  /api/ai-calls/{id}/recording — stream the recording
+WS   /api/live-agent/ws           — live agent call: mic PCM16 16 kHz in, agent PCM16 24 kHz + JSON events out
+GET  /api/live-agent/status       — Gemini Live readiness (project, model, voice, voices)
 GET  /api/call-flows/guide/{lead_id} — call flow adapted to one property (facts on record, tips, prior answers)
 POST /api/call-flows/score        — Hot/Warm/Cold from answers (rubric + valuation)
 POST /api/leads/{id}/skiptrace    — run skip trace for a lead

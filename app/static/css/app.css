@@ -725,3 +725,14 @@ table.data-table {
 .form-hint { font-size: 0.8rem; color: var(--muted); }
 .form-row { display: flex; gap: var(--sp-3); }
 .form-row > .form-group { flex: 1; }
+
+/* ── Live agent call (Gemini) ───────────────────────────────── */
+.live-chat { display: flex; flex-direction: column; gap: var(--sp-2); max-height: 360px; overflow-y: auto; padding: var(--sp-2) 0; }
+.live-bubble { max-width: 85%; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); font-size: var(--fs-sm); line-height: 1.45; }
+.live-bubble.agent { align-self: flex-start; background: var(--navy-50); border: 1px solid var(--navy-100); }
+.live-bubble.caller { align-self: flex-end; background: var(--success-bg); border: 1px solid var(--border); }
+.live-bubble .who { display: block; font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--text-3); margin-bottom: 2px; }
+.mic-meter { height: 6px; width: 120px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.mic-meter > div { height: 100%; width: 0; background: var(--success); transition: width 80ms linear; }
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); margin-right: 6px; animation: livepulse 1.2s infinite; }
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }

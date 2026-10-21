@@ -52,7 +52,11 @@ echo "[1/4] Enabling APIs…"
 gcloud services enable run.googleapis.com \
   cloudbuild.googleapis.com \
   secretmanager.googleapis.com \
+  aiplatform.googleapis.com \
   --project "$PROJECT_ID" --quiet
+# Live AI agent (Gemini Live on Vertex AI) runs as the Cloud Run service account.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/aiplatform.user --condition=None --quiet >/dev/null
 
 # ── 2. Secrets ───────────────────────────────────────────────
 echo "[2/4] Secrets…"
@@ -94,7 +98,7 @@ gcloud builds submit --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" \
 # ── 4. Deploy to Cloud Run ───────────────────────────────────
 echo "[4/4] Deploying to Cloud Run…"
 # Always-set values.
-ENV_VARS="APP_BASE_URL=${APP_BASE_URL},DATABASE_URL=sqlite:///./dre_capital.db"
+ENV_VARS="APP_BASE_URL=${APP_BASE_URL},DATABASE_URL=sqlite:///./dre_capital.db,GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 # First deploy gets default admin credentials; later deploys keep the current ones unless exported.
 if ! service_exists; then
   ENV_VARS="${ENV_VARS},ADMIN_EMAIL=${ADMIN_EMAIL:-admin@dre-capital.com},ADMIN_PASSWORD=${ADMIN_PASSWORD:-capital2026}"
@@ -106,6 +110,7 @@ else
 fi
 # Optional values: only changed when exported.
 for v in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET RENTCAST_API_KEY LLM_API_KEY CALLING_PROVIDER AI_VOICE \
+         VERTEX_LIVE_MODEL VERTEX_LIVE_VOICE VERTEX_LOCATION \
          TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER; do
   if [ -n "${!v:-}" ]; then ENV_VARS="${ENV_VARS},${v}=${!v}"; fi
 done
@@ -118,6 +123,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --port 8080 \
   --memory 1Gi --cpu 1 \
   --min-instances 1 --max-instances 1 \
+  --timeout 900 \
   --update-secrets "$SECRETS" \
   --update-env-vars "$ENV_VARS" \
   --project "$PROJECT_ID" --quiet

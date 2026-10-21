@@ -4,48 +4,37 @@
 <div class="page-header">
   <div>
     <div class="page-title">🤖 AI Test Call</div>
-    <div class="page-subtitle">Have the AI agent call your phone and speak a call flow — listen live, then replay the recording.</div>
+    <div class="page-subtitle">Talk to the AI agent live — it runs your call flow like a real seller call. Hear it, interrupt it, then replay and review.</div>
   </div>
 </div>
 
-<div id="ai-config-warning" class="gc-context" style="display:none"></div>
-
 <div class="grid-2">
   <div class="card">
-    <div class="card-header">Place a test call</div>
+    <div class="card-header">🎙 Talk to Sam live <span class="badge badge-info">Google Gemini Live</span></div>
     <div class="card-body">
-      <form id="ai-call-form" class="form">
+      <div id="live-config-warning" class="gc-context" style="display:none"></div>
+      <form id="live-form" class="form">
         <div class="grid-2">
           <div class="form-group">
-            <label class="form-label" for="ai-number">Call this number (yours)</label>
-            <input type="tel" id="ai-number" class="form-input" placeholder="(555) 123-4567" required>
+            <label class="form-label" for="live-name">Agent asks for</label>
+            <input type="text" id="live-name" class="form-input" placeholder="Your first name">
           </div>
           <div class="form-group">
-            <label class="form-label" for="ai-name">Agent asks for</label>
-            <input type="text" id="ai-name" class="form-input" placeholder="Your first name">
-          </div>
-        </div>
-        <div class="grid-2">
-          <div class="form-group">
-            <label class="form-label" for="ai-flow">Call flow</label>
-            <select id="ai-flow" class="form-select"></select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ai-voice">Voice</label>
-            <select id="ai-voice" class="form-select"><option value="">Default</option></select>
+            <label class="form-label" for="live-voice">Voice</label>
+            <select id="live-voice" class="form-select"></select>
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label" for="ai-lead">Rehearse a property (optional)</label>
-          <select id="ai-lead" class="form-select"><option value="">— Generic seller conversation —</option></select>
-          <div class="form-hint">The agent uses this lead's address and facts on record — but it still calls <strong>your</strong> number above.</div>
+          <label class="form-label" for="live-flow">Call flow</label>
+          <select id="live-flow" class="form-select flow-select"></select>
         </div>
         <div class="form-group">
-          <label class="text-sm"><input type="checkbox" id="ai-consent">
-            This is my phone number and I agree to receive an AI-voice test call on it.</label>
+          <label class="form-label" for="live-lead">Rehearse a property (optional)</label>
+          <select id="live-lead" class="form-select lead-select"><option value="">— Generic seller conversation —</option></select>
+          <div class="form-hint">You play the seller; the agent uses this lead's address and facts on record (never our offer numbers).</div>
         </div>
-        <button type="submit" class="btn btn-gold" id="ai-start-btn">📞 Call me now</button>
-        <div class="form-hint mt-2">AI calls to sellers need their prior written consent, so numbers belonging to CRM leads are blocked.</div>
+        <button type="submit" class="btn btn-gold" id="live-start-btn">🎙 Start live call</button>
+        <div class="form-hint mt-2">Uses your microphone. Headphones give the cleanest audio. Calls end automatically after 6 minutes.</div>
       </form>
     </div>
   </div>
@@ -53,11 +42,50 @@
   <div class="card" id="ai-live-card">
     <div class="card-header">
       <span>Current call</span>
-      <span id="ai-status-badge" class="badge badge-neutral">Idle</span>
+      <span id="ai-status-badge"><span class="badge badge-neutral">Idle</span></span>
     </div>
     <div class="card-body" id="ai-live-body">
-      <div class="empty-state text-sm">No call yet. Place a test call to hear the agent.</div>
+      <div class="empty-state text-sm">Start a live call to talk with the agent.</div>
     </div>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-header">📞 Phone test call <span class="badge badge-neutral">Bland AI</span></div>
+  <div class="card-body">
+    <div id="ai-config-warning" class="gc-context" style="display:none"></div>
+    <form id="ai-call-form" class="form">
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label" for="ai-number">Call this number (yours)</label>
+          <input type="tel" id="ai-number" class="form-input" placeholder="(555) 123-4567" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-name">Agent asks for</label>
+          <input type="text" id="ai-name" class="form-input" placeholder="Your first name">
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label" for="ai-flow">Call flow</label>
+          <select id="ai-flow" class="form-select flow-select"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-voice">Voice</label>
+          <select id="ai-voice" class="form-select"><option value="">Default</option></select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ai-lead">Rehearse a property (optional)</label>
+        <select id="ai-lead" class="form-select lead-select"><option value="">— Generic seller conversation —</option></select>
+      </div>
+      <div class="form-group">
+        <label class="text-sm"><input type="checkbox" id="ai-consent">
+          This is my phone number and I agree to receive an AI-voice test call on it.</label>
+      </div>
+      <button type="submit" class="btn btn-outline" id="ai-start-btn">📞 Call my phone</button>
+      <div class="form-hint mt-2">AI calls to sellers need their prior written consent, so numbers belonging to CRM leads are blocked.</div>
+    </form>
   </div>
 </div>
 
@@ -66,6 +94,7 @@
   <div class="card-body" id="ai-history"><div class="empty-state text-sm">Loading…</div></div>
 </div>
 {% endblock %}
+
 {% block scripts %}
 <script>
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
@@ -75,6 +104,7 @@ const STATUS_BADGES = {
   "no-answer": ["badge-warning", "No answer"], busy: ["badge-warning", "Busy"], failed: ["badge-danger", "Failed"],
   canceled: ["badge-neutral", "Hung up"], unknown: ["badge-neutral", "Unknown"],
 };
+const SCORE_BADGES = { hot: ["badge-danger", "🔥 Hot"], warm: ["badge-warning", "Warm"], cold: ["badge-info", "Cold"] };
 let _current = null, _poll = null, _timer = null, _startedAt = null;
 let _audioCtx = null, _ws = null, _gain = null, _nextTime = 0;
 
@@ -82,43 +112,261 @@ function aiStatusBadge(s) {
   const [cls, label] = STATUS_BADGES[s] || ["badge-neutral", escHtml(s)];
   return `<span class="badge ${cls}">${label}</span>`;
 }
+function scoreBadge(s) { const b = SCORE_BADGES[s]; return b ? `<span class="badge ${b[0]}">${b[1]}</span>` : ""; }
 function fmtDur(s) { return s == null ? "—" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+function setStatus(html) { document.getElementById("ai-status-badge").innerHTML = html; }
 
 async function init() {
-  const [status, flows] = await Promise.all([
+  const [live, bland, flows] = await Promise.all([
+    API.get("/api/live-agent/status").catch(() => ({ configured: false, voices: [] })),
     API.get("/api/ai-calls/status").catch(() => ({ configured: false })),
     API.get("/api/call-flows?active=true").catch(() => []),
   ]);
+  // Live (Gemini)
+  const lw = document.getElementById("live-config-warning");
+  if (!live.configured) {
+    lw.style.display = "";
+    lw.innerHTML = `<strong>Live agent unavailable.</strong> ${escHtml(live.error || "Google Cloud credentials missing.")}`;
+    document.getElementById("live-start-btn").disabled = true;
+  }
+  if (!window.AudioWorkletNode || !navigator.mediaDevices) {
+    lw.style.display = ""; lw.textContent = "This browser can't stream microphone audio — use a recent Chrome, Edge, or Safari.";
+    document.getElementById("live-start-btn").disabled = true;
+  }
+  document.getElementById("live-voice").innerHTML = (live.voices || []).map(v =>
+    `<option ${v === live.voice ? "selected" : ""}>${escHtml(v)}</option>`).join("");
+  // Phone (Bland)
   const warn = document.getElementById("ai-config-warning");
-  if (!status.configured) {
+  if (!bland.configured) {
     warn.style.display = "";
-    warn.innerHTML = `<strong>AI agent not set up.</strong> ${IS_ADMIN
-      ? 'Add your Bland AI API key in <a href="/settings">Settings → Calling &amp; API Keys → AI Voice Agent</a>.'
+    warn.innerHTML = `<strong>Phone calls not set up.</strong> ${IS_ADMIN
+      ? 'Add a Bland AI API key in <a href="/settings">Settings → Calling &amp; API Keys → AI Voice Agent</a>.'
       : 'Ask an admin to add the Bland AI API key in Settings.'}`;
     document.getElementById("ai-start-btn").disabled = true;
-  } else if (status.ok === false) {
+  } else if (bland.ok === false) {
     warn.style.display = "";
-    warn.innerHTML = `<strong>Bland AI error:</strong> ${escHtml(status.error)}`;
+    warn.innerHTML = `<strong>Bland AI error:</strong> ${escHtml(bland.error)}`;
   }
   const voiceSel = document.getElementById("ai-voice");
-  (status.voices || []).forEach(v => voiceSel.insertAdjacentHTML("beforeend", `<option value="${escHtml(v)}">${escHtml(v)}</option>`));
-  if (status.default_voice) voiceSel.value = status.default_voice;
-  document.getElementById("ai-flow").innerHTML = flows.map(f =>
-    `<option value="${f.id}" ${f.is_default ? "selected" : ""}>${escHtml(f.name)}</option>`).join("") ||
-    '<option value="">No call flows — create one in Settings</option>';
+  (bland.voices || []).forEach(v => voiceSel.insertAdjacentHTML("beforeend", `<option value="${escHtml(v)}">${escHtml(v)}</option>`));
+  if (bland.default_voice) voiceSel.value = bland.default_voice;
+  // Shared selects
+  const flowOpts = flows.map(f => `<option value="${f.id}" ${f.is_default ? "selected" : ""}>${escHtml(f.name)}</option>`).join("")
+    || '<option value="">No call flows — create one in Settings</option>';
+  document.querySelectorAll(".flow-select").forEach(s => s.innerHTML = flowOpts);
   API.get("/api/leads?limit=200").then(r => {
     const items = Array.isArray(r) ? r : (r.items || r.leads || []);
-    const sel = document.getElementById("ai-lead");
-    items.forEach(l => sel.insertAdjacentHTML("beforeend",
-      `<option value="${l.id}">${escHtml(l.property_address)}${l.property_city ? ", " + escHtml(l.property_city) : ""} — ${escHtml(l.owner_name || "")}</option>`));
+    const opts = items.map(l => `<option value="${l.id}">${escHtml(l.property_address)}${l.property_city ? ", " + escHtml(l.property_city) : ""} — ${escHtml(l.owner_name || "")}</option>`).join("");
+    document.querySelectorAll(".lead-select").forEach(s => s.insertAdjacentHTML("beforeend", opts));
   }).catch(() => {});
   API.get("/api/auth/me").then(me => {
-    const name = document.getElementById("ai-name");
-    if (!name.value && me.name) name.placeholder = me.name.split(" ")[0];
+    const first = (me.name || "").split(" ")[0];
+    if (first) document.querySelectorAll("#live-name, #ai-name").forEach(i => i.placeholder = first);
   }).catch(() => {});
   loadHistory();
 }
 
+// ════════════════ Live call in the browser (Gemini Live) ════════════════
+// Mic → AudioWorklet → 16 kHz PCM16 → WebSocket → CRM → Gemini; agent audio back at 24 kHz.
+const MIC_WORKLET = `
+class Mic16k extends AudioWorkletProcessor {
+  constructor() { super(); this.ratio = sampleRate / 16000; this.acc = 0; this.out = []; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.acc += 1;
+      if (this.acc >= this.ratio) {
+        this.acc -= this.ratio;
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        this.out.push(s < 0 ? s * 0x8000 : s * 0x7fff);
+      }
+    }
+    if (this.out.length >= 1600) {             // 100 ms chunks
+      const buf = new Int16Array(this.out.splice(0, 1600));
+      this.port.postMessage(buf.buffer, [buf.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor("mic-16k", Mic16k);`;
+
+const live = { ws: null, ctx: null, stream: null, node: null, out: null, next: 0, sources: new Set(), muted: false, ended: false };
+
+document.getElementById("live-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (live.ws) return;
+  const btn = document.getElementById("live-start-btn");
+  btn.disabled = true;
+  try {
+    await startLive();
+  } catch (err) {
+    toast(err.name === "NotAllowedError" ? "Microphone permission is needed to talk to the agent." : "Couldn't start: " + err.message, "error");
+    stopLive();
+    btn.disabled = false;
+  }
+});
+
+async function startLive() {
+  stopListening(); clearInterval(_poll); clearInterval(_timer); _timer = null;
+  live.stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+  });
+  live.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await live.ctx.resume();
+  const url = URL.createObjectURL(new Blob([MIC_WORKLET], { type: "application/javascript" }));
+  await live.ctx.audioWorklet.addModule(url);
+  const src = live.ctx.createMediaStreamSource(live.stream);
+  live.node = new AudioWorkletNode(live.ctx, "mic-16k");
+  const sink = live.ctx.createGain(); sink.gain.value = 0;          // keep the worklet pulled, silently
+  src.connect(live.node); live.node.connect(sink); sink.connect(live.ctx.destination);
+  live.out = live.ctx.createGain(); live.out.connect(live.ctx.destination);
+  live.next = live.ctx.currentTime; live.muted = false; live.ended = false;
+
+  renderLivePanel();
+  const params = new URLSearchParams({
+    greet_name: document.getElementById("live-name").value || "",
+    voice: document.getElementById("live-voice").value || "",
+    flow_id: document.getElementById("live-flow").value || "",
+    lead_id: document.getElementById("live-lead").value || "",
+  });
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  live.ws = new WebSocket(`${proto}://${location.host}/api/live-agent/ws?${params}`);
+  live.ws.binaryType = "arraybuffer";
+  live.node.port.onmessage = (ev) => {
+    if (live.ws && live.ws.readyState === 1 && !live.muted && !live.ended) live.ws.send(ev.data);
+    updateMeter(ev.data);
+  };
+  live.ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) playAgent(ev.data);
+    else onLiveEvent(JSON.parse(ev.data));
+  };
+  live.ws.onclose = () => { if (!live.ended) { setStatus(aiStatusBadge("completed")); } stopLive(); };
+}
+
+function renderLivePanel() {
+  setStatus('<span class="badge badge-info">Connecting…</span>');
+  document.getElementById("ai-live-body").innerHTML = `
+    <div class="gc-bar">
+      <span><span class="live-dot"></span><strong>Live with Sam</strong></span>
+      <span id="live-timer" class="col-mono">0:00</span>
+      <span class="text-muted">Mic</span><div class="mic-meter"><div id="live-meter"></div></div>
+    </div>
+    <div class="flex gap-2" style="flex-wrap:wrap">
+      <button class="btn btn-outline" id="live-mute-btn" onclick="toggleMute()">🎙 Mute</button>
+      <button class="btn btn-outline" style="color:var(--danger)" onclick="endLive()">⏹ End call</button>
+    </div>
+    <div class="form-hint mt-2" id="live-hint">Connecting to the agent…</div>
+    <div class="live-chat mt-4" id="live-chat"></div>`;
+}
+
+function onLiveEvent(ev) {
+  const hint = document.getElementById("live-hint");
+  if (ev.type === "ready") {
+    _current = { id: ev.call_id };
+    _startedAt = Date.now();
+    setStatus(aiStatusBadge("in-progress"));
+    if (hint) hint.textContent = `Sam is on the line (${ev.voice}). Talk normally — you can interrupt.`;
+    _timer = setInterval(() => {
+      const t = document.getElementById("live-timer");
+      if (t) t.textContent = fmtDur(Math.floor((Date.now() - _startedAt) / 1000));
+    }, 1000);
+  } else if (ev.type === "transcript") {
+    addBubble(ev.who, ev.text);
+  } else if (ev.type === "interrupted") {
+    flushAgentAudio();
+  } else if (ev.type === "ending") {
+    live.ended = true;
+    stopMic();
+    setStatus('<span class="badge badge-info">Wrapping up…</span>');
+    if (hint) hint.textContent = "Call ended — saving the recording and scoring the call…";
+  } else if (ev.type === "ended") {
+    live.ended = true;
+    clearInterval(_timer); _timer = null;
+    showCall(ev.call, false);
+    loadHistory();
+  } else if (ev.type === "error") {
+    live.ended = true;
+    setStatus(aiStatusBadge("failed"));
+    const body = document.getElementById("ai-live-body");
+    body.insertAdjacentHTML("afterbegin", `<div class="gc-context">${escHtml(ev.message)}</div>`);
+    stopLive();
+  }
+}
+
+function addBubble(who, text) {
+  const chat = document.getElementById("live-chat");
+  if (!chat) return;
+  const last = chat.lastElementChild;
+  if (last && last.dataset.who === who) {
+    last.querySelector(".txt").textContent += text;
+  } else {
+    chat.insertAdjacentHTML("beforeend",
+      `<div class="live-bubble ${who}" data-who="${who}"><span class="who">${who === "agent" ? "Sam (AI)" : "You"}</span><span class="txt"></span></div>`);
+    chat.lastElementChild.querySelector(".txt").textContent = text;
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function playAgent(buf) {
+  if (!live.ctx || buf.byteLength < 2) return;
+  const view = new DataView(buf);
+  const n = Math.floor(buf.byteLength / 2);
+  const audio = live.ctx.createBuffer(1, n, 24000);
+  const ch = audio.getChannelData(0);
+  for (let i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
+  const src = live.ctx.createBufferSource();
+  src.buffer = audio;
+  src.connect(live.out);
+  const at = Math.max(live.next, live.ctx.currentTime + 0.03);
+  src.start(at);
+  live.next = at + audio.duration;
+  live.sources.add(src);
+  src.onended = () => live.sources.delete(src);
+  window.__liveStats = window.__liveStats || { agentSeconds: 0, chunks: 0 };
+  window.__liveStats.agentSeconds += audio.duration; window.__liveStats.chunks++;
+}
+
+function flushAgentAudio() {            // barge-in: stop whatever the agent was saying
+  live.sources.forEach(s => { try { s.stop(); } catch (e) {} });
+  live.sources.clear();
+  if (live.ctx) live.next = live.ctx.currentTime;
+}
+
+function updateMeter(buf) {
+  const m = document.getElementById("live-meter");
+  if (!m) return;
+  const a = new Int16Array(buf);
+  let sum = 0;
+  for (let i = 0; i < a.length; i += 8) sum += a[i] * a[i];
+  const rms = Math.sqrt(sum / (a.length / 8)) / 32768;
+  m.style.width = live.muted ? "0%" : Math.min(100, rms * 400) + "%";
+}
+
+function toggleMute() {
+  live.muted = !live.muted;
+  const b = document.getElementById("live-mute-btn");
+  if (b) b.textContent = live.muted ? "🔇 Unmute" : "🎙 Mute";
+}
+
+function endLive() {
+  if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: "end" }));
+  stopMic();
+}
+
+function stopMic() {
+  if (live.stream) { live.stream.getTracks().forEach(t => t.stop()); live.stream = null; }
+  if (live.node) { live.node.port.onmessage = null; live.node.disconnect(); live.node = null; }
+}
+
+function stopLive() {
+  stopMic();
+  if (live.ws) { live.ws.onclose = null; try { live.ws.close(); } catch (e) {} live.ws = null; }
+  document.getElementById("live-start-btn").disabled = false;
+  clearInterval(_timer); _timer = null;
+}
+
+// ════════════════ Phone test call (Bland AI) ════════════════
 document.getElementById("ai-call-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!document.getElementById("ai-consent").checked) { toast("Please confirm this is your number.", "error"); return; }
@@ -134,6 +382,7 @@ document.getElementById("ai-call-form").addEventListener("submit", async (e) => 
       consent: true,
     });
     toast("The agent is calling your phone now.", "success");
+    _startedAt = null;
     showCall(call, true);
     loadHistory();
   } catch (err) {
@@ -143,31 +392,33 @@ document.getElementById("ai-call-form").addEventListener("submit", async (e) => 
 
 function showCall(call, startPolling) {
   _current = call;
+  const isLiveCall = call.provider === "vertex";
   if (call.status === "in-progress" && !_startedAt) _startedAt = Date.now();
-  document.getElementById("ai-status-badge").outerHTML = `<span id="ai-status-badge">${aiStatusBadge(call.status)}</span>`;
-  const live = !FINAL.has(call.status);
+  setStatus(aiStatusBadge(call.status) + " " + scoreBadge(call.score));
+  const live_ = !FINAL.has(call.status) && !isLiveCall;
   document.getElementById("ai-live-body").innerHTML = `
     <div class="gc-bar">
-      <span>📞 ${escHtml(fmtPhone(call.to_number))}</span>
+      <span>${isLiveCall ? "🎙 Browser call (Gemini Live)" : "📞 " + escHtml(fmtPhone(call.to_number))}</span>
       <span>Asking for <strong>${escHtml(call.greet_name || "")}</strong></span>
       ${call.voice ? `<span class="text-muted">Voice: ${escHtml(call.voice)}</span>` : ""}
-      <span id="ai-timer" class="col-mono">${live ? (_startedAt ? fmtDur(Math.floor((Date.now() - _startedAt) / 1000)) : "") : fmtDur(call.duration_seconds)}</span>
+      <span id="ai-timer" class="col-mono">${live_ ? (_startedAt ? fmtDur(Math.floor((Date.now() - _startedAt) / 1000)) : "") : fmtDur(call.duration_seconds)}</span>
     </div>
-    ${live ? `
+    ${live_ ? `
       <div class="flex gap-2" style="flex-wrap:wrap">
         <button class="btn btn-primary" id="ai-listen-btn" onclick="toggleListen()">${_ws ? "🔇 Stop listening" : "🔊 Listen live"}</button>
         <button class="btn btn-outline" style="color:var(--danger)" onclick="hangUp()">⏹ Hang up</button>
       </div>
       <div class="form-hint mt-2" id="ai-listen-hint">${_ws ? "Streaming the call audio…" : "Answer the call on your phone — or listen in from here."}</div>` : ""}
     ${call.error ? `<div class="gc-context mt-4">${escHtml(call.error)}</div>` : ""}
-    ${call.has_recording ? `<div class="gc-section mt-4"><h4>Recording</h4>
+    ${call.score || call.summary ? `<div class="gc-section mt-4"><h4>Result ${scoreBadge(call.score)}</h4>
+      ${call.summary ? `<div class="gc-summary">${escHtml(call.summary)}</div>` : ""}</div>` : ""}
+    ${call.has_recording ? `<div class="gc-section"><h4>Recording</h4>
       <audio controls preload="none" style="width:100%" src="/api/ai-calls/${call.id}/recording"></audio></div>`
-      : (call.status === "completed" ? '<div class="form-hint mt-4">Recording processing… (about a minute)</div>' : "")}
-    ${call.summary ? `<div class="gc-section"><h4>Summary</h4><div class="gc-summary">${escHtml(call.summary)}</div></div>` : ""}
+      : (call.status === "completed" && !isLiveCall ? '<div class="form-hint mt-4">Recording processing… (about a minute)</div>' : "")}
     ${call.transcript ? `<div class="gc-section"><h4>Transcript</h4><div class="gc-summary">${escHtml(call.transcript)}</div></div>` : ""}
-    ${!live ? `<div class="text-xs text-muted">${call.answered_by ? "Answered by: " + escHtml(call.answered_by) + " · " : ""}${call.price != null ? "Cost: $" + call.price.toFixed(2) : ""}</div>` : ""}`;
+    ${!live_ && (call.answered_by || call.price != null) ? `<div class="text-xs text-muted">${call.answered_by ? "Answered by: " + escHtml(call.answered_by) + " · " : ""}${call.price != null ? "Cost: $" + call.price.toFixed(2) : ""}</div>` : ""}`;
   if (startPolling) startPoll();
-  if (!live) { stopListening(); clearInterval(_timer); _timer = null; }
+  if (!live_) { stopListening(); clearInterval(_timer); _timer = null; }
   else if (!_timer) _timer = setInterval(() => {
     const t = document.getElementById("ai-timer");
     if (t && _startedAt) t.textContent = fmtDur(Math.floor((Date.now() - _startedAt) / 1000));
@@ -190,11 +441,11 @@ function startPoll() {
 
 async function hangUp() {
   if (!_current) return;
-  try { showCall(await API.post(`/api/ai-calls/${_current.id}/stop`), false); toast("Call ended.", ""); }
+  try { showCall(await API.post(`/api/ai-calls/${_current.id}/stop`), true); toast("Hanging up…", ""); }
   catch (err) { toast("Couldn't hang up: " + err.message, "error"); }
 }
 
-// ── Live listen: PCM16 little-endian, 16 kHz mono over WebSocket → Web Audio ──
+// Bland live listen: PCM16 LE 16 kHz over WebSocket → Web Audio
 async function toggleListen() {
   if (_ws) { stopListening(); showCall(_current, false); return; }
   if (!_current) return;
@@ -213,14 +464,14 @@ function startListening(url, sampleRate) {
   _audioCtx.resume();
   _gain = _audioCtx.createGain();
   _gain.connect(_audioCtx.destination);
-  _nextTime = _audioCtx.currentTime + 0.2;   // small jitter buffer
+  _nextTime = _audioCtx.currentTime + 0.2;
   _ws = new WebSocket(url);
   _ws.binaryType = "arraybuffer";
   _ws.onmessage = (ev) => {
     if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength < 2) return;
     const view = new DataView(ev.data);
     const n = Math.floor(ev.data.byteLength / 2);
-    const buf = _audioCtx.createBuffer(1, n, sampleRate);   // browser resamples to the device rate
+    const buf = _audioCtx.createBuffer(1, n, sampleRate);
     const ch = buf.getChannelData(0);
     for (let i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
     const src = _audioCtx.createBufferSource();
@@ -229,8 +480,6 @@ function startListening(url, sampleRate) {
     const at = Math.max(_nextTime, _audioCtx.currentTime + 0.05);
     src.start(at);
     _nextTime = at + buf.duration;
-    window.__aiListenStats = (window.__aiListenStats || { chunks: 0, seconds: 0 });
-    window.__aiListenStats.chunks++; window.__aiListenStats.seconds += buf.duration;
   };
   _ws.onclose = () => {
     _ws = null;
@@ -247,17 +496,19 @@ function stopListening() {
   if (_gain) { _gain.disconnect(); _gain = null; }
 }
 
+// ════════════════ History ════════════════
 async function loadHistory() {
   const el = document.getElementById("ai-history");
   try {
     const calls = await API.get("/api/ai-calls");
     if (!calls.length) { el.innerHTML = '<div class="empty-state text-sm">No test calls yet.</div>'; return; }
-    el.innerHTML = `<table class="data-table"><thead><tr><th>When</th><th>Number</th><th>Asked for</th><th>Status</th><th>Length</th><th></th></tr></thead><tbody>` +
+    el.innerHTML = `<table class="data-table"><thead><tr><th>When</th><th>Type</th><th>Asked for</th><th>Status</th><th>Score</th><th>Length</th><th></th></tr></thead><tbody>` +
       calls.map(c => `<tr>
         <td class="text-sm">${fmtDateTime(c.created_at)}</td>
-        <td class="col-mono">${escHtml(fmtPhone(c.to_number))}</td>
+        <td class="text-sm">${c.provider === "vertex" ? "🎙 Live (Gemini)" : "📞 " + escHtml(fmtPhone(c.to_number))}</td>
         <td>${escHtml(c.greet_name || "")}</td>
         <td>${aiStatusBadge(c.status)}</td>
+        <td>${scoreBadge(c.score) || '<span class="text-muted">—</span>'}</td>
         <td class="col-mono">${fmtDur(c.duration_seconds)}</td>
         <td><button class="btn btn-outline btn-sm" onclick="openCall('${c.id}')">${c.has_recording ? "▶ Play" : "Open"}</button></td>
       </tr>`).join("") + `</tbody></table>`;
@@ -265,10 +516,11 @@ async function loadHistory() {
 }
 
 async function openCall(id) {
+  if (live.ws) { toast("Finish the live call first.", ""); return; }
   stopListening(); clearInterval(_poll); clearInterval(_timer); _timer = null; _startedAt = null;
   try {
     const c = await API.get(`/api/ai-calls/${id}`);
-    showCall(c, !FINAL.has(c.status) || (c.status === "completed" && !c.has_recording));
+    showCall(c, c.provider !== "vertex" && (!FINAL.has(c.status) || (c.status === "completed" && !c.has_recording)));
     document.getElementById("ai-live-card").scrollIntoView({ behavior: "smooth" });
   } catch (err) { toast(err.message, "error"); }
 }

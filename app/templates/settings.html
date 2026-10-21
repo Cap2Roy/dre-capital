@@ -145,6 +145,43 @@
 
   <div class="card mb-4">
     <div class="card-header">
+      Live AI Agent (Google Gemini Live · Vertex AI)
+      <span id="gemini-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        Powers <a href="/ai-test-call">AI Test Call → Talk to Sam live</a>: a real-time voice agent that speaks your call
+        flow in the browser. Runs on this app's Google Cloud project with its service account — no API key. Billed by
+        Vertex AI per minute of audio.
+      </p>
+      <form id="gemini-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="gemini-model">Model</label>
+            <input type="text" id="gemini-model" class="form-input" placeholder="gemini-3.8-live">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="gemini-voice">Default Voice</label>
+            <select id="gemini-voice" class="form-select"></select>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="gemini-region">Region</label>
+            <input type="text" id="gemini-region" class="form-input" placeholder="us-central1">
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary">Save Live Agent Settings</button>
+          <button type="button" class="btn btn-outline" onclick="checkGemini()">Check</button>
+        </div>
+        <div id="gemini-result" class="text-sm mt-4"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">
       AI Voice Agent (Bland AI)
       <span id="bland-status" class="badge badge-neutral">Checking…</span>
     </div>
@@ -404,6 +441,9 @@ async function loadSettings() {
     populateQuoForm();
     document.getElementById("bland-key").value = getVal("bland_api_key");
     document.getElementById("ai-voice-default").value = getVal("ai_voice");
+    document.getElementById("gemini-model").value = getVal("vertex_live_model");
+    document.getElementById("gemini-region").value = getVal("vertex_location");
+    checkGemini(getVal("vertex_live_voice"));
     populateTwilioForm();
     populateSkipTraceForm();
     populateCompsForm();
@@ -568,6 +608,31 @@ async function saveSettings(items, successMsg) {
     toast(successMsg, "success");
     await loadSettings(); // refresh status badges
   } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+document.getElementById("gemini-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "vertex_live_model", value: document.getElementById("gemini-model").value.trim() },
+    { key: "vertex_live_voice", value: document.getElementById("gemini-voice").value },
+    { key: "vertex_location", value: document.getElementById("gemini-region").value.trim() },
+  ], "Live agent settings saved");
+});
+
+async function checkGemini(savedVoice) {
+  const badge = document.getElementById("gemini-status");
+  const out = document.getElementById("gemini-result");
+  try {
+    const s = await API.get("/api/live-agent/status");
+    const sel = document.getElementById("gemini-voice");
+    const keep = typeof savedVoice === "string" ? (savedVoice || s.voice) : sel.value;
+    sel.innerHTML = s.voices.map(v => `<option ${v === keep ? "selected" : ""}>${escHtml(v)}</option>`).join("");
+    badge.className = `badge ${s.configured ? "badge-success" : "badge-warning"}`;
+    badge.textContent = s.configured ? "✓ Ready" : "⚠ Not available";
+    out.innerHTML = s.configured
+      ? `Project <strong>${escHtml(s.project)}</strong> · ${escHtml(s.location)} · ${escHtml(s.model)}`
+      : `<span class="badge badge-danger">✗</span> ${escHtml(s.error || "")}`;
+  } catch (err) { out.textContent = "Error: " + err.message; }
 }
 
 document.getElementById("bland-form").addEventListener("submit", async (e) => {

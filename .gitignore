@@ -18,3 +18,6 @@ build/
 *.db-shm
 *.db-wal
 .env
+
+# Call recordings (local files; recreated per container)
+recordings/

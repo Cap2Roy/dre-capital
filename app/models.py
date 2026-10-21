@@ -513,6 +513,7 @@ class AiCall(TimestampMixin, Base):
     recording_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    score: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # hot | warm | cold (post-call)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

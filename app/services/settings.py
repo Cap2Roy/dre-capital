@@ -111,6 +111,28 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "AI_VOICE",
         "description": "Bland voice name or ID for the AI agent (blank = Bland's default).",
     },
+    # ── Live AI agent (Google Gemini Live on Vertex AI) ────────────
+    "vertex_live_model": {
+        "label": "Gemini Live Model",
+        "category": "calling",
+        "is_secret": False,
+        "env": "VERTEX_LIVE_MODEL",
+        "description": "Vertex AI Live model for the browser agent (default gemini-3.8-live).",
+    },
+    "vertex_live_voice": {
+        "label": "Gemini Live Voice",
+        "category": "calling",
+        "is_secret": False,
+        "env": "VERTEX_LIVE_VOICE",
+        "description": "Voice for the live agent, e.g. Charon, Puck, Kore, Fenrir, Aoede (default Charon).",
+    },
+    "vertex_location": {
+        "label": "Vertex AI Region",
+        "category": "calling",
+        "is_secret": False,
+        "env": "VERTEX_LOCATION",
+        "description": "Vertex AI region (default us-central1).",
+    },
     # ── Auto-scrape ────────────────────────────────────────────────
     "auto_scrape_enabled": {
         "label": "Daily Auto-Scrape Enabled",

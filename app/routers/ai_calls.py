@@ -165,8 +165,17 @@ def hang_up(call_id: str, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/{call_id}/recording")
 def recording(call_id: str, request: Request, db: Session = Depends(get_db)):
-    """Stream the call recording (proxied so the provider URL stays private)."""
+    """Play the call recording. CRM-recorded (live) calls are served as files so the
+    browser gets a length and can seek; provider recordings are proxied so the
+    provider URL stays private."""
     call = _own_call(db, _user(request, db), call_id)
+    if call.recording_url and call.recording_url.startswith("file:"):
+        from pathlib import Path
+        from fastapi.responses import FileResponse
+        path = Path(call.recording_url[len("file:"):])
+        if not path.is_file():
+            raise HTTPException(404, "This recording is no longer on the server (recordings reset on redeploy).")
+        return FileResponse(path, media_type="audio/wav", filename=f"call-{call.id}.wav", content_disposition_type="inline")
     try:
         body, media = ai_agent.stream_recording(db, call)
     except ai_agent.AiAgentError as exc:

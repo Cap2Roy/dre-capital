@@ -587,6 +587,7 @@ class AiCallOut(ORMBase):
     has_recording: bool = False
     transcript: Optional[str] = None
     summary: Optional[str] = None
+    score: Optional[str] = None
     price: Optional[float] = None
     error: Optional[str] = None
     created_at: UTCDateTime

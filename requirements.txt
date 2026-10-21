@@ -10,3 +10,4 @@ itsdangerous==2.2.0
 bcrypt==4.2.1
 httpx==0.28.1
 twilio==9.4.0
+google-genai==2.32.0
