@@ -559,3 +559,43 @@ class MeetingCreate(BaseModel):
     location: Optional[str] = None
     notes: Optional[str] = None
     reminder_minutes: int = 60
+
+
+# ── AI voice agent test calls ────────────────────────────────────────────────
+
+class AiCallCreate(BaseModel):
+    to_number: str                          # the tester's own phone
+    greet_name: Optional[str] = None        # who the agent asks for ("Hi, is this ___?")
+    lead_id: Optional[str] = None           # rehearse this property's conversation
+    call_flow_id: Optional[str] = None      # default flow if omitted
+    voice: Optional[str] = None             # Bland voice; default from settings
+    consent: bool = False                   # tester confirms they own / may receive AI calls on this number
+
+
+class AiCallOut(ORMBase):
+    id: str
+    to_number: str
+    greet_name: Optional[str] = None
+    lead_id: Optional[str] = None
+    call_flow_id: Optional[str] = None
+    voice: Optional[str] = None
+    provider: str
+    provider_call_id: Optional[str] = None
+    status: str
+    answered_by: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    has_recording: bool = False
+    transcript: Optional[str] = None
+    summary: Optional[str] = None
+    price: Optional[float] = None
+    error: Optional[str] = None
+    created_at: UTCDateTime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _recording_flag(cls, data):
+        # Never expose the provider's recording URL; the UI streams via our proxy.
+        if hasattr(data, "recording_url"):
+            return {**{k: getattr(data, k) for k in cls.model_fields if hasattr(data, k)},
+                    "has_recording": bool(data.recording_url)}
+        return data

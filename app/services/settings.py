@@ -96,6 +96,21 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "",
         "description": "E.164 number of the Quo line (filled automatically when the number ID is detected).",
     },
+    # ── AI voice agent (Bland) — test calls ────────────────────────
+    "bland_api_key": {
+        "label": "Bland AI API Key",
+        "category": "calling",
+        "is_secret": True,
+        "env": "BLAND_API_KEY",
+        "description": "API key from app.bland.ai → Settings. Powers AI test calls where the agent speaks your call flow.",
+    },
+    "ai_voice": {
+        "label": "AI Agent Voice",
+        "category": "calling",
+        "is_secret": False,
+        "env": "AI_VOICE",
+        "description": "Bland voice name or ID for the AI agent (blank = Bland's default).",
+    },
     # ── Auto-scrape ────────────────────────────────────────────────
     "auto_scrape_enabled": {
         "label": "Daily Auto-Scrape Enabled",

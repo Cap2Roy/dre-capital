@@ -145,6 +145,37 @@
 
   <div class="card mb-4">
     <div class="card-header">
+      AI Voice Agent (Bland AI)
+      <span id="bland-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        Powers <a href="/ai-test-call">AI Test Call</a>: an AI agent speaks your call flow to a tester's own phone, which
+        can be heard live and replayed. Get a key at <a href="https://app.bland.ai" target="_blank" rel="noopener">app.bland.ai</a>
+        and turn on <strong>Live Listen</strong> in its organization settings. Billed by Bland per minute.
+      </p>
+      <form id="bland-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="bland-key">Bland API Key</label>
+            <input type="password" id="bland-key" class="form-input" autocomplete="off" placeholder="Paste your Bland API key">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ai-voice-default">Default Voice</label>
+            <input type="text" id="ai-voice-default" class="form-input" placeholder="e.g. June (blank = Bland default)">
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary">Save AI Agent Settings</button>
+          <button type="button" class="btn btn-outline" onclick="testBland()">Test Key</button>
+        </div>
+        <div id="bland-test-result" class="text-sm mt-4"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">
       Twilio Configuration
       <span id="twilio-status" class="badge badge-neutral">Checking…</span>
     </div>
@@ -371,6 +402,8 @@ async function loadSettings() {
   try {
     _settingsData = await API.get("/api/settings");
     populateQuoForm();
+    document.getElementById("bland-key").value = getVal("bland_api_key");
+    document.getElementById("ai-voice-default").value = getVal("ai_voice");
     populateTwilioForm();
     populateSkipTraceForm();
     populateCompsForm();
@@ -433,6 +466,11 @@ function populateCadenceForm() {
 }
 
 function updateStatusBadges() {
+  const blandOk = isSet("bland_api_key");
+  const blandBadge = document.getElementById("bland-status");
+  blandBadge.className = `badge ${blandOk ? "badge-success" : "badge-warning"}`;
+  blandBadge.textContent = blandOk ? "✓ Key set" : "⚠ Not Configured";
+
   const quoOk = isSet("quo_api_key");
   const quoBadge = document.getElementById("quo-status");
   quoBadge.className = `badge ${quoOk ? "badge-success" : "badge-warning"}`;
@@ -530,6 +568,26 @@ async function saveSettings(items, successMsg) {
     toast(successMsg, "success");
     await loadSettings(); // refresh status badges
   } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+document.getElementById("bland-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "bland_api_key", value: document.getElementById("bland-key").value },
+    { key: "ai_voice", value: document.getElementById("ai-voice-default").value.trim() },
+  ], "AI agent settings saved");
+});
+
+async function testBland() {
+  const out = document.getElementById("bland-test-result");
+  out.textContent = "Testing…";
+  try {
+    const r = await API.get("/api/ai-calls/status");
+    if (!r.configured) { out.innerHTML = '<span class="badge badge-warning">No key</span> Save a Bland API key first.'; return; }
+    out.innerHTML = r.ok
+      ? `<span class="badge badge-success">✓ Connected</span> Balance: ${r.balance != null ? "$" + Number(r.balance).toFixed(2) : "—"} · ${r.voices.length} voices`
+      : `<span class="badge badge-danger">✗ Failed</span> ${escHtml(r.error)}`;
+  } catch (err) { out.innerHTML = `<span class="badge badge-danger">✗ Error</span> ${escHtml(err.message)}`; }
 }
 
 async function enableQuoAutoSync() {

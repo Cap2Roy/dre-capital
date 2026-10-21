@@ -12,8 +12,9 @@
 #
 #   PROJECT_ID=dre-capital bash deploy/deploy.sh                 # code-only redeploy
 #   QUO_API_KEY=... PROJECT_ID=dre-capital bash deploy/deploy.sh  # also rotate the Quo key
+#   BLAND_API_KEY=... PROJECT_ID=dre-capital bash deploy/deploy.sh # set the AI voice agent key
 #
-# Optional exports: QUO_API_KEY, CALLING_PROVIDER, GOOGLE_CLIENT_ID,
+# Optional exports: QUO_API_KEY, BLAND_API_KEY, AI_VOICE, CALLING_PROVIDER, GOOGLE_CLIENT_ID,
 # GOOGLE_CLIENT_SECRET, RENTCAST_API_KEY, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL,
 # ADMIN_EMAIL, ADMIN_PASSWORD, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER.
 #
@@ -25,7 +26,8 @@ PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project)}"
 REGION="${REGION:-us-central1}"
 SERVICE_NAME="dre-capital"
 SESSION_SECRET="dre-capital-secret-key"
-QUO_SECRET="dre-capital-quo-api-key"
+# Optional API keys kept in Secret Manager: ENV_VAR=secret-name
+OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key"
 
 echo "=== DRE-Capital GCP Deployment ==="
 echo "Project:  $PROJECT_ID"
@@ -60,25 +62,29 @@ if ! secret_exists "$SESSION_SECRET"; then
   printf '%s' "$SECRET_KEY" | gcloud secrets create "$SESSION_SECRET" --data-file=- --project "$PROJECT_ID" --quiet
 fi
 
-# Company Quo API key: stored only in Secret Manager, never in env/CLI history of the service.
-if [ -n "${QUO_API_KEY:-}" ]; then
-  if secret_exists "$QUO_SECRET"; then
-    printf '%s' "$QUO_API_KEY" | gcloud secrets versions add "$QUO_SECRET" --data-file=- --project "$PROJECT_ID" --quiet
-  else
-    printf '%s' "$QUO_API_KEY" | gcloud secrets create "$QUO_SECRET" --data-file=- --project "$PROJECT_ID" --quiet
-  fi
-  echo "  Quo API key stored in Secret Manager ($QUO_SECRET)."
-fi
+# Optional API keys (company Quo key, Bland AI key): exporting one stores/rotates it in
+# Secret Manager; it is never set as a plain env var on the service.
 SECRETS="SECRET_KEY=${SESSION_SECRET}:latest"
-for s in "$SESSION_SECRET" "$QUO_SECRET"; do
-  if secret_exists "$s"; then
-    gcloud secrets add-iam-policy-binding "$s" --project "$PROJECT_ID" \
-      --member "serviceAccount:${RUNTIME_SA}" --role roles/secretmanager.secretAccessor --quiet >/dev/null
+grant() {
+  gcloud secrets add-iam-policy-binding "$1" --project "$PROJECT_ID" \
+    --member "serviceAccount:${RUNTIME_SA}" --role roles/secretmanager.secretAccessor --quiet >/dev/null
+}
+grant "$SESSION_SECRET"
+for pair in $OPTIONAL_SECRETS; do
+  var="${pair%%=*}"; secret="${pair#*=}"
+  if [ -n "${!var:-}" ]; then
+    if secret_exists "$secret"; then
+      printf '%s' "${!var}" | gcloud secrets versions add "$secret" --data-file=- --project "$PROJECT_ID" --quiet
+    else
+      printf '%s' "${!var}" | gcloud secrets create "$secret" --data-file=- --project "$PROJECT_ID" --quiet
+    fi
+    echo "  ${var} stored in Secret Manager (${secret})."
+  fi
+  if secret_exists "$secret"; then
+    grant "$secret"
+    SECRETS="${SECRETS},${var}=${secret}:latest"
   fi
 done
-if secret_exists "$QUO_SECRET"; then
-  SECRETS="${SECRETS},QUO_API_KEY=${QUO_SECRET}:latest"
-fi
 
 # ── 3. Build container ────────────────────────────────────────
 echo "[3/4] Building container…"
@@ -99,7 +105,7 @@ else
   done
 fi
 # Optional values: only changed when exported.
-for v in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET RENTCAST_API_KEY LLM_API_KEY CALLING_PROVIDER \
+for v in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET RENTCAST_API_KEY LLM_API_KEY CALLING_PROVIDER AI_VOICE \
          TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER; do
   if [ -n "${!v:-}" ]; then ENV_VARS="${ENV_VARS},${v}=${!v}"; fi
 done

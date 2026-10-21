@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from app.database import init_db
 from app.changelog import CURRENT_VERSION as __version__
 from app.routers import (
-    auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, meetings, messages, scraper, settings, users, valuation,
+    ai_calls, auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, meetings, messages, scraper, settings, users, valuation,
 )
 from app.services.scheduler import scheduler_loop
 
@@ -85,7 +85,7 @@ templates.env.filters["wn_method_class"] = lambda m: {
 }.get(m, "badge-neutral")
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, call_flows, buyers, contracts, scraper, messages, meetings):
+for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, call_flows, ai_calls, buyers, contracts, scraper, messages, meetings):
     app.include_router(r.router)
 
 
@@ -189,6 +189,11 @@ def page_import(request: Request):
 @app.get("/scraper", response_class=HTMLResponse)
 def page_scraper(request: Request):
     return templates.TemplateResponse("scraper.html", {**_ctx(request), "page": "scraper"})
+
+
+@app.get("/ai-test-call", response_class=HTMLResponse)
+def page_ai_test_call(request: Request):
+    return templates.TemplateResponse("ai_test_call.html", {**_ctx(request), "page": "ai-test-call"})
 
 
 @app.get("/settings", response_class=HTMLResponse)

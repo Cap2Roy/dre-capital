@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}AI Test Call{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🤖 AI Test Call</div>
+    <div class="page-subtitle">Have the AI agent call your phone and speak a call flow — listen live, then replay the recording.</div>
+  </div>
+</div>
+
+<div id="ai-config-warning" class="gc-context" style="display:none"></div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">Place a test call</div>
+    <div class="card-body">
+      <form id="ai-call-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="ai-number">Call this number (yours)</label>
+            <input type="tel" id="ai-number" class="form-input" placeholder="(555) 123-4567" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ai-name">Agent asks for</label>
+            <input type="text" id="ai-name" class="form-input" placeholder="Your first name">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="ai-flow">Call flow</label>
+            <select id="ai-flow" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ai-voice">Voice</label>
+            <select id="ai-voice" class="form-select"><option value="">Default</option></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ai-lead">Rehearse a property (optional)</label>
+          <select id="ai-lead" class="form-select"><option value="">— Generic seller conversation —</option></select>
+          <div class="form-hint">The agent uses this lead's address and facts on record — but it still calls <strong>your</strong> number above.</div>
+        </div>
+        <div class="form-group">
+          <label class="text-sm"><input type="checkbox" id="ai-consent">
+            This is my phone number and I agree to receive an AI-voice test call on it.</label>
+        </div>
+        <button type="submit" class="btn btn-gold" id="ai-start-btn">📞 Call me now</button>
+        <div class="form-hint mt-2">AI calls to sellers need their prior written consent, so numbers belonging to CRM leads are blocked.</div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" id="ai-live-card">
+    <div class="card-header">
+      <span>Current call</span>
+      <span id="ai-status-badge" class="badge badge-neutral">Idle</span>
+    </div>
+    <div class="card-body" id="ai-live-body">
+      <div class="empty-state text-sm">No call yet. Place a test call to hear the agent.</div>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-header">Recent test calls</div>
+  <div class="card-body" id="ai-history"><div class="empty-state text-sm">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+const FINAL = new Set(["completed", "no-answer", "busy", "failed", "canceled", "unknown"]);
+const STATUS_BADGES = {
+  queued: ["badge-info", "Dialing…"], "in-progress": ["badge-success", "● Live"], completed: ["badge-neutral", "Completed"],
+  "no-answer": ["badge-warning", "No answer"], busy: ["badge-warning", "Busy"], failed: ["badge-danger", "Failed"],
+  canceled: ["badge-neutral", "Hung up"], unknown: ["badge-neutral", "Unknown"],
+};
+let _current = null, _poll = null, _timer = null, _startedAt = null;
+let _audioCtx = null, _ws = null, _gain = null, _nextTime = 0;
+
+function aiStatusBadge(s) {
+  const [cls, label] = STATUS_BADGES[s] || ["badge-neutral", escHtml(s)];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+function fmtDur(s) { return s == null ? "—" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+async function init() {
+  const [status, flows] = await Promise.all([
+    API.get("/api/ai-calls/status").catch(() => ({ configured: false })),
+    API.get("/api/call-flows?active=true").catch(() => []),
+  ]);
+  const warn = document.getElementById("ai-config-warning");
+  if (!status.configured) {
+    warn.style.display = "";
+    warn.innerHTML = `<strong>AI agent not set up.</strong> ${IS_ADMIN
+      ? 'Add your Bland AI API key in <a href="/settings">Settings → Calling &amp; API Keys → AI Voice Agent</a>.'
+      : 'Ask an admin to add the Bland AI API key in Settings.'}`;
+    document.getElementById("ai-start-btn").disabled = true;
+  } else if (status.ok === false) {
+    warn.style.display = "";
+    warn.innerHTML = `<strong>Bland AI error:</strong> ${escHtml(status.error)}`;
+  }
+  const voiceSel = document.getElementById("ai-voice");
+  (status.voices || []).forEach(v => voiceSel.insertAdjacentHTML("beforeend", `<option value="${escHtml(v)}">${escHtml(v)}</option>`));
+  if (status.default_voice) voiceSel.value = status.default_voice;
+  document.getElementById("ai-flow").innerHTML = flows.map(f =>
+    `<option value="${f.id}" ${f.is_default ? "selected" : ""}>${escHtml(f.name)}</option>`).join("") ||
+    '<option value="">No call flows — create one in Settings</option>';
+  API.get("/api/leads?limit=200").then(r => {
+    const items = Array.isArray(r) ? r : (r.items || r.leads || []);
+    const sel = document.getElementById("ai-lead");
+    items.forEach(l => sel.insertAdjacentHTML("beforeend",
+      `<option value="${l.id}">${escHtml(l.property_address)}${l.property_city ? ", " + escHtml(l.property_city) : ""} — ${escHtml(l.owner_name || "")}</option>`));
+  }).catch(() => {});
+  API.get("/api/auth/me").then(me => {
+    const name = document.getElementById("ai-name");
+    if (!name.value && me.name) name.placeholder = me.name.split(" ")[0];
+  }).catch(() => {});
+  loadHistory();
+}
+
+document.getElementById("ai-call-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!document.getElementById("ai-consent").checked) { toast("Please confirm this is your number.", "error"); return; }
+  const btn = document.getElementById("ai-start-btn");
+  btn.disabled = true;
+  try {
+    const call = await API.post("/api/ai-calls", {
+      to_number: document.getElementById("ai-number").value,
+      greet_name: document.getElementById("ai-name").value || null,
+      call_flow_id: document.getElementById("ai-flow").value || null,
+      voice: document.getElementById("ai-voice").value || null,
+      lead_id: document.getElementById("ai-lead").value || null,
+      consent: true,
+    });
+    toast("The agent is calling your phone now.", "success");
+    showCall(call, true);
+    loadHistory();
+  } catch (err) {
+    toast(err.message.replace(/^\d+\s*/, ""), "error");
+  } finally { btn.disabled = false; }
+});
+
+function showCall(call, startPolling) {
+  _current = call;
+  if (call.status === "in-progress" && !_startedAt) _startedAt = Date.now();
+  document.getElementById("ai-status-badge").outerHTML = `<span id="ai-status-badge">${aiStatusBadge(call.status)}</span>`;
+  const live = !FINAL.has(call.status);
+  document.getElementById("ai-live-body").innerHTML = `
+    <div class="gc-bar">
+      <span>📞 ${escHtml(fmtPhone(call.to_number))}</span>
+      <span>Asking for <strong>${escHtml(call.greet_name || "")}</strong></span>
+      ${call.voice ? `<span class="text-muted">Voice: ${escHtml(call.voice)}</span>` : ""}
+      <span id="ai-timer" class="col-mono">${live ? (_startedAt ? fmtDur(Math.floor((Date.now() - _startedAt) / 1000)) : "") : fmtDur(call.duration_seconds)}</span>
+    </div>
+    ${live ? `
+      <div class="flex gap-2" style="flex-wrap:wrap">
+        <button class="btn btn-primary" id="ai-listen-btn" onclick="toggleListen()">${_ws ? "🔇 Stop listening" : "🔊 Listen live"}</button>
+        <button class="btn btn-outline" style="color:var(--danger)" onclick="hangUp()">⏹ Hang up</button>
+      </div>
+      <div class="form-hint mt-2" id="ai-listen-hint">${_ws ? "Streaming the call audio…" : "Answer the call on your phone — or listen in from here."}</div>` : ""}
+    ${call.error ? `<div class="gc-context mt-4">${escHtml(call.error)}</div>` : ""}
+    ${call.has_recording ? `<div class="gc-section mt-4"><h4>Recording</h4>
+      <audio controls preload="none" style="width:100%" src="/api/ai-calls/${call.id}/recording"></audio></div>`
+      : (call.status === "completed" ? '<div class="form-hint mt-4">Recording processing… (about a minute)</div>' : "")}
+    ${call.summary ? `<div class="gc-section"><h4>Summary</h4><div class="gc-summary">${escHtml(call.summary)}</div></div>` : ""}
+    ${call.transcript ? `<div class="gc-section"><h4>Transcript</h4><div class="gc-summary">${escHtml(call.transcript)}</div></div>` : ""}
+    ${!live ? `<div class="text-xs text-muted">${call.answered_by ? "Answered by: " + escHtml(call.answered_by) + " · " : ""}${call.price != null ? "Cost: $" + call.price.toFixed(2) : ""}</div>` : ""}`;
+  if (startPolling) startPoll();
+  if (!live) { stopListening(); clearInterval(_timer); _timer = null; }
+  else if (!_timer) _timer = setInterval(() => {
+    const t = document.getElementById("ai-timer");
+    if (t && _startedAt) t.textContent = fmtDur(Math.floor((Date.now() - _startedAt) / 1000));
+  }, 1000);
+}
+
+function startPoll() {
+  clearInterval(_poll);
+  const started = Date.now();
+  _poll = setInterval(async () => {
+    if (!_current) return;
+    try {
+      const c = await API.get(`/api/ai-calls/${_current.id}`);
+      const done = FINAL.has(c.status) && (c.status !== "completed" || (c.has_recording && c.transcript));
+      showCall(c, false);
+      if (done || Date.now() - started > 12 * 60 * 1000) { clearInterval(_poll); _poll = null; loadHistory(); }
+    } catch (e) { /* transient — keep polling */ }
+  }, 2500);
+}
+
+async function hangUp() {
+  if (!_current) return;
+  try { showCall(await API.post(`/api/ai-calls/${_current.id}/stop`), false); toast("Call ended.", ""); }
+  catch (err) { toast("Couldn't hang up: " + err.message, "error"); }
+}
+
+// ── Live listen: PCM16 little-endian, 16 kHz mono over WebSocket → Web Audio ──
+async function toggleListen() {
+  if (_ws) { stopListening(); showCall(_current, false); return; }
+  if (!_current) return;
+  try {
+    const { url, sample_rate } = await API.post(`/api/ai-calls/${_current.id}/listen`);
+    startListening(url, sample_rate || 16000);
+    showCall(_current, false);
+  } catch (err) {
+    const hint = document.getElementById("ai-listen-hint");
+    if (hint) hint.textContent = err.message.replace(/^\d+\s*/, "");
+  }
+}
+
+function startListening(url, sampleRate) {
+  _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  _audioCtx.resume();
+  _gain = _audioCtx.createGain();
+  _gain.connect(_audioCtx.destination);
+  _nextTime = _audioCtx.currentTime + 0.2;   // small jitter buffer
+  _ws = new WebSocket(url);
+  _ws.binaryType = "arraybuffer";
+  _ws.onmessage = (ev) => {
+    if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength < 2) return;
+    const view = new DataView(ev.data);
+    const n = Math.floor(ev.data.byteLength / 2);
+    const buf = _audioCtx.createBuffer(1, n, sampleRate);   // browser resamples to the device rate
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
+    const src = _audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(_gain);
+    const at = Math.max(_nextTime, _audioCtx.currentTime + 0.05);
+    src.start(at);
+    _nextTime = at + buf.duration;
+    window.__aiListenStats = (window.__aiListenStats || { chunks: 0, seconds: 0 });
+    window.__aiListenStats.chunks++; window.__aiListenStats.seconds += buf.duration;
+  };
+  _ws.onclose = () => {
+    _ws = null;
+    const hint = document.getElementById("ai-listen-hint");
+    if (hint) hint.textContent = "Live audio ended.";
+    const btn = document.getElementById("ai-listen-btn");
+    if (btn) btn.textContent = "🔊 Listen live";
+  };
+  _ws.onerror = () => toast("Live audio connection failed.", "error");
+}
+
+function stopListening() {
+  if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
+  if (_gain) { _gain.disconnect(); _gain = null; }
+}
+
+async function loadHistory() {
+  const el = document.getElementById("ai-history");
+  try {
+    const calls = await API.get("/api/ai-calls");
+    if (!calls.length) { el.innerHTML = '<div class="empty-state text-sm">No test calls yet.</div>'; return; }
+    el.innerHTML = `<table class="data-table"><thead><tr><th>When</th><th>Number</th><th>Asked for</th><th>Status</th><th>Length</th><th></th></tr></thead><tbody>` +
+      calls.map(c => `<tr>
+        <td class="text-sm">${fmtDateTime(c.created_at)}</td>
+        <td class="col-mono">${escHtml(fmtPhone(c.to_number))}</td>
+        <td>${escHtml(c.greet_name || "")}</td>
+        <td>${aiStatusBadge(c.status)}</td>
+        <td class="col-mono">${fmtDur(c.duration_seconds)}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="openCall('${c.id}')">${c.has_recording ? "▶ Play" : "Open"}</button></td>
+      </tr>`).join("") + `</tbody></table>`;
+  } catch (err) { el.innerHTML = `<div class="empty-state text-sm">${escHtml(err.message)}</div>`; }
+}
+
+async function openCall(id) {
+  stopListening(); clearInterval(_poll); clearInterval(_timer); _timer = null; _startedAt = null;
+  try {
+    const c = await API.get(`/api/ai-calls/${id}`);
+    showCall(c, !FINAL.has(c.status) || (c.status === "completed" && !c.has_recording));
+    document.getElementById("ai-live-card").scrollIntoView({ behavior: "smooth" });
+  } catch (err) { toast(err.message, "error"); }
+}
+
+init();
+</script>
+{% endblock %}

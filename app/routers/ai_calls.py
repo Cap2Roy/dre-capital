@@ -1,0 +1,174 @@
+"""AI voice agent test calls: the agent speaks a call flow to the tester's phone.
+
+Guardrails (test-only by design):
+- the tester must confirm they own / may receive AI calls on the number;
+- numbers that belong to a lead in the CRM are refused — AI-voice calls to
+  sellers require their prior written consent (TCPA);
+- one active test call per user, at most ``DAILY_LIMIT`` per user per day.
+"""
+from __future__ import annotations
+
+import re
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import AiCall, CallFlow, Lead, User
+from app.schemas import AiCallCreate, AiCallOut
+from app.services import ai_agent
+from app.timeutil import utcnow
+
+router = APIRouter(prefix="/api/ai-calls", tags=["ai-calls"])
+
+DAILY_LIMIT = 20
+
+
+def _user(request: Request, db: Session) -> User:
+    u = getattr(request.state, "user", None)
+    user = db.get(User, u.id) if u else None
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    return user
+
+
+def _own_call(db: Session, user: User, call_id: str) -> AiCall:
+    call = db.get(AiCall, call_id)
+    if call is None or (call.user_id != user.id and user.role != "admin"):
+        raise HTTPException(404, "Test call not found")
+    return call
+
+
+@router.get("/status")
+def agent_status(request: Request, db: Session = Depends(get_db)):
+    """Whether the AI agent is configured; with a key, also balance + voices."""
+    _user(request, db)
+    from app.services.settings import get_setting
+    if not ai_agent.api_key(db):
+        return {"configured": False, "default_voice": get_setting(db, "ai_voice") or ""}
+    try:
+        return {"configured": True, "default_voice": get_setting(db, "ai_voice") or "", **ai_agent.account_status(db)}
+    except ai_agent.AiAgentError as exc:
+        return {"configured": True, "ok": False, "error": str(exc), "default_voice": get_setting(db, "ai_voice") or ""}
+
+
+@router.post("", response_model=AiCallOut, status_code=201)
+def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depends(get_db)):
+    """Have the AI agent call the tester's phone and speak the call flow."""
+    from app.services.messaging import find_phone_by_number
+    from app.services.quo import to_e164
+    from app.services.settings import get_setting
+
+    user = _user(request, db)
+    if not payload.consent:
+        raise HTTPException(400, "Confirm this is your number and you agree to receive an AI test call.")
+    number = to_e164(payload.to_number)
+    if not re.fullmatch(r"\+1\d{10}", number):
+        raise HTTPException(400, "Enter a US/Canada phone number, e.g. (555) 123-4567.")
+    if find_phone_by_number(db, number) is not None:
+        raise HTTPException(403, "That number belongs to a lead in the CRM. AI-voice calls to sellers need their "
+                                 "prior written consent — AI test calls are for your own phone.")
+    active = db.execute(select(AiCall).where(
+        AiCall.user_id == user.id, AiCall.status.in_(["queued", "in-progress"]),
+        AiCall.created_at >= utcnow() - timedelta(minutes=ai_agent.MAX_DURATION_MIN + 5),
+    )).scalars().first()
+    if active is not None:
+        raise HTTPException(409, "You already have a test call in progress — hang it up first.")
+    today = db.execute(select(func.count(AiCall.id)).where(
+        AiCall.user_id == user.id, AiCall.created_at >= utcnow() - timedelta(days=1),
+    )).scalar() or 0
+    if today >= DAILY_LIMIT:
+        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} AI test calls reached.")
+
+    flow = db.get(CallFlow, payload.call_flow_id) if payload.call_flow_id else db.execute(
+        select(CallFlow).where(CallFlow.is_default == True, CallFlow.active == True).limit(1)  # noqa: E712
+    ).scalars().first()
+    if flow is None:
+        raise HTTPException(404, "Call flow not found — create one in Settings → Call Flows.")
+    lead = None
+    if payload.lead_id:
+        lead = db.get(Lead, payload.lead_id)
+        if lead is None:
+            raise HTTPException(404, "Lead not found")
+
+    call = AiCall(
+        user_id=user.id,
+        to_number=number,
+        greet_name=(payload.greet_name or "").strip() or ai_agent.greeting_default(user),
+        lead_id=lead.id if lead else None,
+        call_flow_id=flow.id,
+        voice=(payload.voice or "").strip() or (get_setting(db, "ai_voice") or "").strip() or None,
+    )
+    db.add(call)
+    db.flush()
+    try:
+        ai_agent.start_call(db, call, flow, lead)
+    except ai_agent.AiAgentError as exc:
+        db.rollback()
+        raise HTTPException(502, str(exc))
+    db.commit()
+    db.refresh(call)
+    return call
+
+
+@router.get("", response_model=list[AiCallOut])
+def list_test_calls(request: Request, db: Session = Depends(get_db)):
+    user = _user(request, db)
+    return db.execute(
+        select(AiCall).where(AiCall.user_id == user.id).order_by(AiCall.created_at.desc()).limit(25)
+    ).scalars().all()
+
+
+@router.get("/{call_id}", response_model=AiCallOut)
+def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db)):
+    """Current state — refreshed from Bland until the call is final and processed."""
+    call = _own_call(db, _user(request, db), call_id)
+    try:
+        ai_agent.refresh(db, call)
+    except ai_agent.AiAgentError as exc:
+        call.error = str(exc)
+    db.commit()
+    db.refresh(call)
+    return call
+
+
+@router.post("/{call_id}/listen")
+def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
+    """WebSocket URL for live audio (PCM16 little-endian, 16 kHz, mono)."""
+    call = _own_call(db, _user(request, db), call_id)
+    try:
+        return {"url": ai_agent.listen_url(db, call), "sample_rate": 16000, "format": "pcm_s16le"}
+    except ai_agent.AiAgentError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/{call_id}/stop", response_model=AiCallOut)
+def hang_up(call_id: str, request: Request, db: Session = Depends(get_db)):
+    call = _own_call(db, _user(request, db), call_id)
+    try:
+        ai_agent.stop(db, call)
+    except ai_agent.AiAgentError as exc:
+        raise HTTPException(502, str(exc))
+    # Don't mark it final locally: after a hang-up Bland still finalizes the call
+    # (duration, recording, transcript) — keep tracking its real status.
+    try:
+        ai_agent.refresh(db, call)
+    except ai_agent.AiAgentError:
+        pass
+    db.commit()
+    db.refresh(call)
+    return call
+
+
+@router.get("/{call_id}/recording")
+def recording(call_id: str, request: Request, db: Session = Depends(get_db)):
+    """Stream the call recording (proxied so the provider URL stays private)."""
+    call = _own_call(db, _user(request, db), call_id)
+    try:
+        body, media = ai_agent.stream_recording(db, call)
+    except ai_agent.AiAgentError as exc:
+        raise HTTPException(404, str(exc))
+    return StreamingResponse(body, media_type=media)

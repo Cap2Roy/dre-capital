@@ -21,15 +21,14 @@
       <a href="/leads" data-page="leads"><span class="nav-icon">⌂</span> <span>Leads</span></a>
       <a href="/comps" data-page="comps"><span class="nav-icon">$</span> <span>Comps &amp; Offers</span></a>
       <a href="/contracts" data-page="contracts"><span class="nav-icon">✎</span> <span>Contracts</span></a>
+      <a href="/ai-test-call" data-page="ai-test-call"><span class="nav-icon">🤖</span> <span>AI Test Call</span></a>
       <div class="nav-section">Network</div>
       <a href="/buyers" data-page="buyers"><span class="nav-icon">♛</span> <span>Cash Buyers</span></a>
       <div class="nav-section">Data</div>
       <a href="/import" data-page="import"><span class="nav-icon">⇪</span> <span>Import Lists</span></a>
       <a href="/scraper" data-page="scraper"><span class="nav-icon">◈</span> <span>Property Scraper</span></a>
-      {% if is_admin %}
-      <div class="nav-section">Admin</div>
-      <a href="/settings" data-page="settings"><span class="nav-icon">⚙</span> <span>Settings &amp; Users</span></a>
-      {% endif %}
+      <div class="nav-section">Account</div>
+      <a href="/settings" data-page="settings"><span class="nav-icon">⚙</span> <span>{% if is_admin %}Settings &amp; Users{% else %}My Settings{% endif %}</span></a>
       <a href="/whats-new" data-page="whats-new"><span class="nav-icon">★</span> <span>What's New</span> <span class="nav-badge badge-gold">v{{ current_version_short }}</span></a>
     </nav>
     <div class="sidebar-footer">

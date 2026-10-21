@@ -489,6 +489,34 @@ class CallFlow(TimestampMixin, Base):
 
 
 
+class AiCall(TimestampMixin, Base):
+    """A test call placed by the AI voice agent (Bland) speaking a call flow.
+
+    Test-only: calls go to a number the user enters (their own phone), never to
+    a lead's number — AI-voice calls to sellers need prior written consent.  A
+    lead may be attached so the agent rehearses that property's conversation.
+    """
+    __tablename__ = "ai_calls"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True, index=True)
+    to_number: Mapped[str] = mapped_column(String(20))
+    greet_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    lead_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
+    call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True)
+    voice: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    provider: Mapped[str] = mapped_column(String(16), default="bland")
+    provider_call_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # queued | ringing | in-progress | completed | no-answer | busy | failed | canceled
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    answered_by: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recording_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
 # ── Message templates & SMS/email history ────────────────────────────────────
 
 class MessageTemplate(TimestampMixin, Base):

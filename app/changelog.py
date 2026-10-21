@@ -19,9 +19,26 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.3.0"
+CURRENT_VERSION = "2.4.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.4.0",
+        "date": "2026-10-21",
+        "title": "AI Test Call — hear the agent speak your call flow",
+        "sections": {
+            "Added": [
+                "AI Test Call page: an AI voice agent (Bland AI) calls a number you enter and speaks a call flow — e.g. Sam for Eylon — holding the conversation like the real thing.",
+                "Listen live from the browser while the call happens, hang up from the CRM, then replay the recording with the transcript, summary, who answered, and cost.",
+                "Optionally rehearse a specific property: the agent uses that lead's address and facts on record (never our ARV/MAO numbers) while still calling your number.",
+                "Settings → AI Voice Agent: Bland API key (masked, or BLAND_API_KEY env/Secret Manager), default voice, Test Key with balance + voice list.",
+                "Guardrails: AI test calls require confirming you own the number, numbers belonging to CRM leads are blocked (AI-voice calls to sellers need prior written consent), one active call at a time, 20 per day.",
+            ],
+            "Fixed": [
+                "Non-admin users had no way to reach Settings → Profile (My Quo Line); the sidebar now shows 'My Settings' to everyone.",
+            ],
+        },
+    },
     {
         "version": "2.3.0",
         "date": "2026-10-21",
