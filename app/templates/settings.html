@@ -145,6 +145,45 @@
 
   <div class="card mb-4">
     <div class="card-header">
+      Property Data — value, tax, MLS listings, photos
+      <span id="pd-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        <strong>RentCast</strong> supplies public records (owner of record, tax, sale history), a value estimate, and
+        MLS listings (status, price, days on market, agent) — for every lead's Property card and the MLS scraper
+        sources. <strong>Google Maps</strong> supplies the house photo (Street View, or satellite when there's none).
+        Each property refresh uses up to 3 RentCast calls.
+      </p>
+      <form id="pd-form" class="form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="pd-rentcast-key">RentCast API Key</label>
+            <input type="password" id="pd-rentcast-key" class="form-input" autocomplete="off" placeholder="From app.rentcast.io/api">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pd-limit">Monthly RentCast call budget</label>
+            <input type="number" id="pd-limit" class="form-input" min="0" placeholder="50">
+            <div class="form-hint" id="pd-usage"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="pd-maps-key">Google Maps API Key</label>
+            <input type="password" id="pd-maps-key" class="form-input" autocomplete="off" placeholder="Street View Static + Maps Static">
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary">Save Property Data Settings</button>
+          <button type="button" class="btn btn-outline" onclick="checkPropertyData(true)">Test</button>
+        </div>
+        <div id="pd-result" class="text-sm mt-4"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">
       Live AI Agent (Google Gemini Live · Vertex AI)
       <span id="gemini-status" class="badge badge-neutral">Checking…</span>
     </div>
@@ -444,6 +483,10 @@ async function loadSettings() {
     document.getElementById("gemini-model").value = getVal("vertex_live_model");
     document.getElementById("gemini-region").value = getVal("vertex_location");
     checkGemini(getVal("vertex_live_voice"));
+    document.getElementById("pd-rentcast-key").value = getVal("rentcast_api_key");
+    document.getElementById("pd-limit").value = getVal("rentcast_monthly_limit");
+    document.getElementById("pd-maps-key").value = getVal("google_maps_api_key");
+    checkPropertyData(false);
     populateTwilioForm();
     populateSkipTraceForm();
     populateCompsForm();
@@ -608,6 +651,32 @@ async function saveSettings(items, successMsg) {
     toast(successMsg, "success");
     await loadSettings(); // refresh status badges
   } catch (err) { toast("Error: " + err.message, "error"); }
+}
+
+document.getElementById("pd-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveSettings([
+    { key: "rentcast_api_key", value: document.getElementById("pd-rentcast-key").value },
+    { key: "rentcast_monthly_limit", value: document.getElementById("pd-limit").value.trim() },
+    { key: "google_maps_api_key", value: document.getElementById("pd-maps-key").value },
+  ], "Property data settings saved");
+});
+
+async function checkPropertyData(check) {
+  const badge = document.getElementById("pd-status");
+  try {
+    const s = await API.get(`/api/leads/property-data/status${check ? "?check=true" : ""}`);
+    const rc = s.rentcast, mp = s.maps;
+    document.getElementById("pd-usage").textContent = `${rc.calls} of ${rc.limit} used in ${rc.month}`;
+    const ok = rc.configured && mp.configured;
+    badge.className = `badge ${ok ? "badge-success" : (rc.configured || mp.configured ? "badge-warning" : "badge-neutral")}`;
+    badge.textContent = ok ? "✓ Configured" : (rc.configured || mp.configured ? "⚠ Partly configured" : "Not configured");
+    if (check) {
+      document.getElementById("pd-result").innerHTML =
+        `RentCast: ${rc.configured ? '<span class="badge badge-success">key set</span>' : '<span class="badge badge-warning">no key</span>'} · ` +
+        `Google Maps: ${!mp.configured ? '<span class="badge badge-warning">no key</span>' : mp.ok ? '<span class="badge badge-success">✓ works</span>' : `<span class="badge badge-danger">✗ ${escHtml(mp.error || "")}</span>`}`;
+    }
+  } catch (err) { badge.textContent = "Error"; }
 }
 
 document.getElementById("gemini-form").addEventListener("submit", async (e) => {

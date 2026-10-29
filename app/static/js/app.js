@@ -184,3 +184,82 @@ document.addEventListener("DOMContentLoaded", () => {
       .then(q => { if (q) badge.textContent = q.count; }).catch(() => {});
   }
 });
+
+// ── Property brief (value, tax, debt, MLS, photo) + number checks ──────────
+// Shared by lead detail, the guided-call screen, and AI Test Call.
+const LIST_LABELS = {
+  pre_foreclosure: "Pre-foreclosure", tax_delinquent: "Tax delinquent", probate: "Probate", divorce: "Divorce",
+  absentee_owner: "Absentee", tired_landlord: "Tired landlord", vacant_code_violation: "Vacant / code",
+};
+
+function renderPropertyBrief(b, opts = {}) {
+  const v = b.value || {}, t = b.tax || {}, d = b.debt || {}, l = b.listing;
+  const range = v.low && v.high ? `<div class="pb-sub">${fmtMoneyK(v.low)} – ${fmtMoneyK(v.high)}</div>` : "";
+  const listingTile = l
+    ? `<div class="pb-tile ${String(l.status).toLowerCase() === "active" ? "pb-warn" : ""}"><div class="pb-k">MLS</div>
+         <div class="pb-v">${escHtml(l.status)}${l.price ? " · " + fmtMoneyK(l.price) : ""}</div>
+         <div class="pb-sub">${l.days_on_market != null ? l.days_on_market + " days · " : ""}${escHtml(l.mls || "")}</div></div>`
+    : `<div class="pb-tile"><div class="pb-k">MLS</div><div class="pb-v">${b.data && b.data.fetched_at ? "Not listed" : "—"}</div></div>`;
+  const debtRows = (d.items || []).map(i => `<li class="${i.certain ? "" : "pb-est"}">${i.amount != null ? `<strong>${fmtMoney(i.amount)}</strong> · ` : ""}${escHtml(i.label)}</li>`).join("");
+  const ownerRec = (b.owner_of_record || []).length
+    ? `Owner of record: <strong>${escHtml(b.owner_of_record.join(", "))}</strong> ${b.owner_match === true ? '<span class="badge badge-success">matches lead</span>' : b.owner_match === false ? '<span class="badge badge-danger">different owner — may have sold</span>' : ""}`
+    : "";
+  const agent = l && l.agent ? `Listing agent: ${escHtml(l.agent.name || "")}${l.agent.phone ? " · " + escHtml(fmtPhone(l.agent.phone)) : ""}${l.agent.office ? " · " + escHtml(l.agent.office) : ""}` : "";
+  const photo = b.photo && b.photo.configured
+    ? `<img class="pb-img" src="${b.photo.url}" alt="Photo of ${escHtml(b.address)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pb-noimg',textContent:'No photo'}))">`
+    : `<div class="pb-noimg">No photo<br><span class="text-xs">Add a Google Maps key in Settings</span></div>`;
+  const fetched = b.data && b.data.fetched_at
+    ? `Data: ${escHtml(b.data.source || "")} · ${fmtDateTime(b.data.fetched_at)}${b.data.error ? ` · <span class="text-danger">${escHtml(b.data.error)}</span>` : ""}`
+    : "No property data pulled yet.";
+  return `<div class="pb ${opts.compact ? "pb-compact" : ""}">
+    <div class="pb-photo">${photo}</div>
+    <div class="pb-main">
+      ${opts.compact ? `<div class="pb-addr">${escHtml(b.address)}<span class="text-muted"> · ${escHtml(b.owner || "")}</span></div>` : ""}
+      <div class="pb-grid">
+        <div class="pb-tile"><div class="pb-k">Est. value</div><div class="pb-v">${fmtMoneyK(v.estimate)}</div>${range}</div>
+        <div class="pb-tile"><div class="pb-k">Assessed</div><div class="pb-v">${fmtMoneyK(v.assessed)}</div></div>
+        <div class="pb-tile"><div class="pb-k">Property tax${t.year ? " " + t.year : ""}</div><div class="pb-v">${t.annual ? fmtMoney(t.annual) + "/yr" : "—"}</div></div>
+        <div class="pb-tile ${t.owed ? "pb-bad" : ""}"><div class="pb-k">Taxes owed</div><div class="pb-v">${t.owed ? fmtMoney(t.owed) : "—"}</div></div>
+        <div class="pb-tile"><div class="pb-k">Est. equity</div><div class="pb-v">${fmtMoneyK(d.est_equity)}</div></div>
+        ${listingTile}
+      </div>
+      ${debtRows ? `<div class="pb-sec"><span class="pb-k">Debt</span><ul class="pb-debt">${debtRows}</ul></div>` : `<div class="pb-sec text-sm text-muted">No debt on record${b.data && b.data.fetched_at ? "" : " (pull property data)"}.</div>`}
+      ${(b.lists || []).length ? `<div class="pb-sec">${b.lists.map(x => `<span class="badge badge-neutral">${escHtml(LIST_LABELS[x] || x)}</span>`).join(" ")}</div>` : ""}
+      ${ownerRec ? `<div class="pb-sec text-sm">${ownerRec}</div>` : ""}
+      ${agent ? `<div class="pb-sec text-sm">${agent}</div>` : ""}
+      <div class="pb-sec text-xs text-muted">${fetched}
+        ${opts.refreshable ? ` <button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="refreshPropertyData('${b.lead_id}', this)">↻ Refresh property data</button>` : ""}</div>
+    </div>
+  </div>`;
+}
+
+function renderNumberCheck(v, opts = {}) {
+  const icon = { pass: "✓", warn: "⚠", fail: "✗" };
+  // For a person dialing, consent/AI-only gates don't apply — show whether to dial at all.
+  const HARD = ["belongs", "dnc", "opt_out", "wrong_number", "hours", "owner_record"];
+  const humanFails = v.fails.filter(k => HARD.includes(k));
+  const verdict = opts.human
+    ? (humanFails.length ? '<span class="badge badge-danger">✗ Check before dialing</span>'
+      : v.verified ? '<span class="badge badge-success">✓ Verified number</span>'
+      : '<span class="badge badge-warning">⚠ Unverified — confirm the owner first</span>')
+    : v.ai_allowed ? '<span class="badge badge-success">✓ Verified — AI may call</span>'
+    : v.verified ? '<span class="badge badge-success">✓ Verified number</span>'
+    : v.fails.length ? '<span class="badge badge-danger">✗ Don\'t call with AI</span>'
+    : '<span class="badge badge-warning">⚠ Not verified</span>';
+  const rows = v.checks.filter(c => !(opts.human && c.key === "consent"))
+    .filter(c => opts.all || c.status !== "pass" || ["confirmed", "owner_record"].includes(c.key))
+    .map(c => `<li class="nc-${c.status}"><span class="nc-i">${icon[c.status]}</span>${escHtml(c.label)}${c.detail ? ` <span class="text-muted">— ${escHtml(c.detail)}</span>` : ""}</li>`).join("");
+  return `<div class="nc"><div class="nc-head"><span class="col-mono">${escHtml(fmtPhone(v.number))}</span> ${verdict}</div><ul class="nc-list">${rows}</ul></div>`;
+}
+
+async function refreshPropertyData(leadId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Pulling data…"; }
+  try {
+    await API.post(`/api/leads/${leadId}/property-data`);
+    toast("Property data updated", "success");
+    if (typeof onBriefRefreshed === "function") onBriefRefreshed(leadId);
+  } catch (e) {
+    toast("Couldn't refresh: " + e.message.replace(/^\d+\s*/, ""), "error");
+    if (btn) { btn.disabled = false; btn.textContent = "↻ Refresh property data"; }
+  }
+}

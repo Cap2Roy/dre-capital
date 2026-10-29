@@ -11,10 +11,14 @@ let _lead = null;
 
 async function loadLead() {
   try {
-    const lead = await API.get(`/api/leads/${LEAD_ID}`);
-    const timeline = await API.get(`/api/leads/${LEAD_ID}/timeline`);
+    const [lead, timeline, brief] = await Promise.all([
+      API.get(`/api/leads/${LEAD_ID}`),
+      API.get(`/api/leads/${LEAD_ID}/timeline`),
+      API.get(`/api/leads/${LEAD_ID}/brief`),
+    ]);
     _lead = lead;
-    document.getElementById("lead-detail").innerHTML = renderLead(lead, timeline);
+    _brief = brief;
+    document.getElementById("lead-detail").innerHTML = renderLead(lead, timeline, brief);
   } catch (e) {
     document.getElementById("lead-detail").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${escHtml(e.message)}</div>`;
   }
@@ -27,7 +31,7 @@ function scoreBadge(s) {
   return `<span class="badge ${map[s][0]}">${map[s][1]}</span>`;
 }
 
-function renderLead(l, tl) {
+function renderLead(l, tl, brief) {
   const valuation = l.valuations[0];   // newest first
   const contract = l.contracts[0];
   return `
@@ -45,6 +49,11 @@ function renderLead(l, tl) {
     <div class="flex gap-2">
       <a href="/queue" class="btn btn-outline">← Back to Queue</a>
     </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header">🏠 Property — value, tax, debt, MLS</div>
+    <div class="card-body">${renderPropertyBrief(brief, { refreshable: true })}</div>
   </div>
 
   <div class="grid-2">
@@ -75,9 +84,12 @@ function renderLead(l, tl) {
                 ${p.quality === "good" ? '<span class="badge badge-success">Good</span>' : ""}
                 ${p.quality === "stale" ? '<span class="badge badge-warning">Stale</span>' : ""}
                 ${!p.dnc_flagged && !p.opted_out ? `<button class="btn-call" onclick="initiateCall('${p.id}')">☎ Call</button>` : ""}
-              </div>`).join("")
+                ${checkFor(p.id) && checkFor(p.id).ai_allowed ? `<button class="btn btn-outline btn-sm" onclick="aiCallOwner('${p.id}')">🤖 AI call</button>` : ""}
+              </div>
+              ${checkFor(p.id) ? renderNumberCheck(checkFor(p.id)) : ""}`).join("")
           }
           ${l.phones.length > 0 ? '<button class="btn btn-outline btn-sm mt-4" onclick="skipTrace(this)">Re-trace</button>' : ""}
+          ${renderConsent(brief)}
         </div>
       </div>
 
@@ -247,6 +259,50 @@ async function initiateCall(phoneId) {
 
 // ── Guided call: the call flow adapted to this property ──────────
 let _guide = null;
+let _brief = null;
+
+function checkFor(phoneId) {
+  return _brief && (_brief.phones || []).find(v => v.phone_id === phoneId);
+}
+
+function onBriefRefreshed() { loadLead(); }
+
+// ── AI-call consent (TCPA) + AI call to the owner's verified number ──
+function renderConsent(b) {
+  const c = b.ai_consent;
+  return `<div class="nc mt-4">
+    <div class="nc-head"><strong>AI-call consent</strong> ${c ? '<span class="badge badge-success">On file</span>' : '<span class="badge badge-neutral">None</span>'}</div>
+    ${c ? `<div class="text-sm mt-2">${escHtml(c.source)} <span class="text-muted">· recorded ${fmtDate(c.at)}</span>
+          <button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="removeConsent()">Remove</button></div>`
+        : `<div class="text-xs text-muted mt-2">The AI agent may only call owners who gave prior express written consent to AI / automated calls (TCPA). Record where it came from:</div>
+           <div class="flex gap-2 mt-2"><input id="consent-src" class="form-input" placeholder="e.g. Web form 'Sell my house' 10/20/2026, TCPA checkbox checked">
+           <button class="btn btn-outline btn-sm" onclick="saveConsent()">Record</button></div>`}
+  </div>`;
+}
+
+async function saveConsent() {
+  try {
+    await API.put(`/api/leads/${LEAD_ID}/ai-consent`, { source: document.getElementById("consent-src").value });
+    toast("Consent recorded", "success"); loadLead();
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+async function removeConsent() {
+  if (!confirm("Remove the AI-call consent record?")) return;
+  await API.put(`/api/leads/${LEAD_ID}/ai-consent`, { remove: true }); loadLead();
+}
+
+async function aiCallOwner(phoneId) {
+  let v;
+  try { v = await API.get(`/api/ai-calls/verify/${phoneId}`); } catch (e) { toast(e.message, "error"); return; }
+  if (!v.ai_allowed) { toast("AI can't call this number: " + (v.reason || "not verified"), "error"); loadLead(); return; }
+  if (!confirm(`The AI agent will call ${fmtPhone(v.number)} now and speak the default call flow for this property. Continue?`)) return;
+  try {
+    const call = await API.post("/api/ai-calls", { phone_id: phoneId });
+    toast("AI agent is calling the owner — follow it on AI Test Call.", "success");
+    window.location.href = `/ai-test-call?call=${call.id}`;
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
 let _activeCall = null;
 let _scoreTimer = null;
 
@@ -334,7 +390,10 @@ async function openGuidedCall(call, phoneId) {
     script = `<div class="gc-context">No active call flow — create one in Settings → Call Flows.</div>`;
   }
 
-  const html = `${bar}${script}
+  const check = checkFor(phoneId);
+  const briefHtml = _brief ? `<div class="gc-section"><h4>The property</h4>${renderPropertyBrief(_brief, { compact: true })}
+      ${check ? renderNumberCheck(check, { human: true }) : ""}</div>` : "";
+  const html = `${bar}${briefHtml}${script}
     <div class="gc-section" id="gc-quo-results" style="display:none"><h4>From Quo</h4><div id="gc-quo-body"></div></div>
     <div class="gc-section"><h4>Log it</h4>
       <div class="grid-2">

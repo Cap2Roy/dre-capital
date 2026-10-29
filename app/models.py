@@ -186,6 +186,11 @@ class Lead(TimestampMixin, Base):
     assigned_to: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     next_followup: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # Prior express written consent to AI / artificial-voice calls (TCPA). Required
+    # before the AI agent may dial this owner; recorded with its source.
+    ai_call_consent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ai_call_consent_source: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    ai_call_consent_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     # Relations
     list_memberships: Mapped[list["LeadListMembership"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     phones: Mapped[list["Phone"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
@@ -196,6 +201,54 @@ class Lead(TimestampMixin, Base):
     contracts: Mapped[list["Contract"]] = relationship(back_populates="lead", order_by="Contract.created_at.desc()")
     messages: Mapped[list["MessageLog"]] = relationship(back_populates="lead")
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="lead")
+    property_record: Mapped[Optional["PropertyRecord"]] = relationship(back_populates="lead", uselist=False, cascade="all, delete-orphan")
+
+
+class PropertyRecord(TimestampMixin, Base):
+    """Third-party data on a lead's property (RentCast: public records, AVM, MLS listing).
+
+    One row per lead, refreshed on demand. ``est_mortgage_balance`` is an
+    *estimate* (last sale × 80% LTV, 30-yr fixed at that year's average rate) —
+    not a recorded lien; ``debt_basis`` says how it was derived.
+    """
+    __tablename__ = "property_records"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    lead_id: Mapped[str] = mapped_column(String(32), ForeignKey("leads.id", ondelete="CASCADE"), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="rentcast")
+    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    matched_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    county: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    property_type: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    owner_names: Mapped[Optional[str]] = mapped_column(Text, nullable=True)        # JSON list, owner of record
+    owner_occupied: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Estimated value (AVM)
+    est_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    est_value_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    est_value_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Tax
+    tax_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tax_annual: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tax_assessed_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tax_history: Mapped[Optional[str]] = mapped_column(Text, nullable=True)        # JSON {year: {tax, assessed}}
+    # Sales
+    last_sale_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_sale_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Debt (estimated) + equity
+    est_mortgage_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    debt_basis: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # MLS listing (RentCast sale listings)
+    listing_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)   # Active | Inactive | None
+    listing_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    listing_days_on_market: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    listing_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    listing_mls: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)      # "UnlockMLS #5519228"
+    listing_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)           # JSON {name, phone, email, office}
+    # Photo (Google Street View): None = not checked, True/False = imagery exists
+    photo_available: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lead: Mapped["Lead"] = relationship(back_populates="property_record")
 
 
 class LeadListMembership(TimestampMixin, Base):
@@ -227,6 +280,8 @@ class Phone(TimestampMixin, Base):
     opted_out: Mapped[bool] = mapped_column(Boolean, default=False)
     opted_out_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set when a call confirmed the owner of this lead's property answered this number.
+    owner_confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     lead: Mapped["Lead"] = relationship(back_populates="phones")
 
 
@@ -500,6 +555,12 @@ class AiCall(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     user_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True, index=True)
     to_number: Mapped[str] = mapped_column(String(20))
+    # Set when the agent dials a lead's own number (not a tester's phone).
+    phone_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("phones.id", ondelete="SET NULL"), nullable=True)
+    # Post-call classification of a lead call: owner_confirmed | wrong_number | not_interested |
+    # callback_requested | warm | dnc_request | no_answer | voicemail
+    outcome: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    call_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True)
     greet_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     lead_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
     call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True)

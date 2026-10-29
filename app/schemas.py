@@ -564,7 +564,8 @@ class MeetingCreate(BaseModel):
 # ── AI voice agent test calls ────────────────────────────────────────────────
 
 class AiCallCreate(BaseModel):
-    to_number: str                          # the tester's own phone
+    to_number: Optional[str] = None         # tester's own phone (rehearsal) …
+    phone_id: Optional[str] = None          # … or a lead's verified number (real call to the owner)
     greet_name: Optional[str] = None        # who the agent asks for ("Hi, is this ___?")
     lead_id: Optional[str] = None           # rehearse this property's conversation
     call_flow_id: Optional[str] = None      # default flow if omitted
@@ -581,6 +582,8 @@ class AiCallOut(ORMBase):
     voice: Optional[str] = None
     provider: str
     provider_call_id: Optional[str] = None
+    phone_id: Optional[str] = None
+    outcome: Optional[str] = None
     status: str
     answered_by: Optional[str] = None
     duration_seconds: Optional[int] = None

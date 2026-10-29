@@ -55,49 +55,79 @@ def agent_status(request: Request, db: Session = Depends(get_db)):
         return {"configured": True, "ok": False, "error": str(exc), "default_voice": get_setting(db, "ai_voice") or ""}
 
 
+@router.get("/verify/{phone_id}")
+def verify_number(phone_id: str, request: Request, db: Session = Depends(get_db)):
+    """Pre-dial check: is this the right number for the property, and may the AI call it now?"""
+    from app.models import Phone
+    from app.services.number_check import check_phone
+    _user(request, db)
+    phone = db.get(Phone, phone_id)
+    if phone is None:
+        raise HTTPException(404, "Phone not found")
+    return check_phone(db, phone.lead, phone, for_ai=True)
+
+
 @router.post("", response_model=AiCallOut, status_code=201)
 def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depends(get_db)):
-    """Have the AI agent call the tester's phone and speak the call flow."""
+    """AI agent call: either a rehearsal to the tester's own phone, or a real call to a
+    lead's number — the latter only after the number passes every verification check."""
+    from app.models import Phone
     from app.services.messaging import find_phone_by_number
+    from app.services.number_check import check_phone
     from app.services.quo import to_e164
     from app.services.settings import get_setting
 
     user = _user(request, db)
-    if not payload.consent:
-        raise HTTPException(400, "Confirm this is your number and you agree to receive an AI test call.")
-    number = to_e164(payload.to_number)
+    lead = None
+    phone = None
+    if payload.phone_id:
+        phone = db.get(Phone, payload.phone_id)
+        if phone is None:
+            raise HTTPException(404, "Phone not found")
+        lead = phone.lead
+        verdict = check_phone(db, lead, phone, for_ai=True)
+        if not verdict["ai_allowed"]:
+            raise HTTPException(403, "The AI can't call this number: " + verdict.get("reason", "verification failed"))
+        number = to_e164(phone.number)
+    else:
+        if not payload.consent:
+            raise HTTPException(400, "Confirm this is your number and you agree to receive an AI test call.")
+        number = to_e164(payload.to_number or "")
+        if find_phone_by_number(db, number) is not None:
+            raise HTTPException(403, "That number belongs to a lead in the CRM — call the owner from the lead's verified "
+                                     "number instead (it checks consent and that the number is correct).")
     if not re.fullmatch(r"\+1\d{10}", number):
         raise HTTPException(400, "Enter a US/Canada phone number, e.g. (555) 123-4567.")
-    if find_phone_by_number(db, number) is not None:
-        raise HTTPException(403, "That number belongs to a lead in the CRM. AI-voice calls to sellers need their "
-                                 "prior written consent — AI test calls are for your own phone.")
     active = db.execute(select(AiCall).where(
         AiCall.user_id == user.id, AiCall.status.in_(["queued", "in-progress"]),
         AiCall.created_at >= utcnow() - timedelta(minutes=ai_agent.MAX_DURATION_MIN + 5),
     )).scalars().first()
     if active is not None:
-        raise HTTPException(409, "You already have a test call in progress — hang it up first.")
+        raise HTTPException(409, "You already have an AI call in progress — hang it up first.")
     today = db.execute(select(func.count(AiCall.id)).where(
         AiCall.user_id == user.id, AiCall.created_at >= utcnow() - timedelta(days=1),
     )).scalar() or 0
     if today >= DAILY_LIMIT:
-        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} AI test calls reached.")
+        raise HTTPException(429, f"Daily limit of {DAILY_LIMIT} AI calls reached.")
 
     flow = db.get(CallFlow, payload.call_flow_id) if payload.call_flow_id else db.execute(
         select(CallFlow).where(CallFlow.is_default == True, CallFlow.active == True).limit(1)  # noqa: E712
     ).scalars().first()
     if flow is None:
         raise HTTPException(404, "Call flow not found — create one in Settings → Call Flows.")
-    lead = None
-    if payload.lead_id:
+    if lead is None and payload.lead_id:
         lead = db.get(Lead, payload.lead_id)
         if lead is None:
             raise HTTPException(404, "Lead not found")
 
+    greet = (payload.greet_name or "").strip()
+    if phone is not None and not greet:
+        greet = ai_agent.owner_greeting(lead)
     call = AiCall(
         user_id=user.id,
         to_number=number,
-        greet_name=(payload.greet_name or "").strip() or ai_agent.greeting_default(user),
+        phone_id=phone.id if phone else None,
+        greet_name=greet or ai_agent.greeting_default(user),
         lead_id=lead.id if lead else None,
         call_flow_id=flow.id,
         voice=(payload.voice or "").strip() or (get_setting(db, "ai_voice") or "").strip() or None,
@@ -128,6 +158,8 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
     call = _own_call(db, _user(request, db), call_id)
     try:
         ai_agent.refresh(db, call)
+        if call.phone_id and call.outcome is None:
+            ai_agent.finalize_lead_call(db, call)
     except ai_agent.AiAgentError as exc:
         call.error = str(exc)
     db.commit()

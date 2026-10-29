@@ -12,9 +12,9 @@ The platform encodes the manual's daily loop end-to-end:
 
 | Manual Task | Platform Feature |
 |---|---|
-| **Build the list** | Import county-record CSVs (appraisal, tax, probate, code violations). Flexible column mapping. **Daily auto-scrape** scheduler for county-tax / public-records sources (toggle + hour in Settings). |
+| **Build the list** | Import county-record CSVs (appraisal, tax, probate, code violations). Flexible column mapping. **MLS listings** (active, or stale 90+ days on market) via RentCast's MLS-fed listings API — imported leads keep MLS number, price, days on market, agent. **Daily auto-scrape** scheduler (toggle + hour in Settings). |
 | **Stack the lists** | Dedup by address, count list overlap per property → **stack depth**. 3+ = call today, 2 = this week, 1 = mail only. |
-| **Value the house** | Comps engine (median $/sqft of renovated solds) + repair budget table + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. Pluggable comps provider seam (mock by default; real RentCast/MLS drops in). |
+| **Value the house** | **Property card on every lead** (RentCast + Google Street View): estimated value + range, assessed value, annual property tax + history, taxes owed, **debt** (county filings, seller-reported mortgage, estimated mortgage from last sale — labeled as an estimate), estimated equity, MLS status, owner of public record, house photo. Monthly RentCast call budget. Comps engine + repair budget + **MAO formula**: `(ARV × 0.70) − Repairs − Fee`. |
 | **Get the phone** | Skip tracing (pluggable provider; mock by default). DNC registry scrub. Opt-out tracking. |
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
@@ -71,6 +71,7 @@ gcloud config set project YOUR_PROJECT_ID
 PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh                       # code-only redeploy
 QUO_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh       # set/rotate the company Quo key
 BLAND_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh     # set the AI voice agent (Bland) key
+GOOGLE_MAPS_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # house photos (Street View Static + Maps Static)
 ```
 
 The script:
@@ -135,6 +136,12 @@ POST /api/ai-calls/{id}/stop      — hang up
 GET  /api/ai-calls/{id}/recording — stream the recording
 WS   /api/live-agent/ws           — live agent call: mic PCM16 16 kHz in, agent PCM16 24 kHz + JSON events out
 GET  /api/live-agent/status       — Gemini Live readiness (project, model, voice, voices)
+GET  /api/leads/{id}/brief        — call brief: value, tax, debt, MLS, photo URL, per-number verification
+POST /api/leads/{id}/property-data — refresh from RentCast (records + value estimate + MLS listing; 3 calls)
+GET  /api/leads/{id}/photo        — house photo (Street View; satellite fallback), key kept server-side
+PUT  /api/leads/{id}/ai-consent   — record/remove the owner's written consent to AI calls (TCPA)
+GET  /api/ai-calls/verify/{phone_id} — is this the right number for the property, and may the AI call it now?
+GET  /api/leads/property-data/status — RentCast usage/budget, Maps key check
 GET  /api/call-flows/guide/{lead_id} — call flow adapted to one property (facts on record, tips, prior answers)
 POST /api/call-flows/score        — Hot/Warm/Cold from answers (rubric + valuation)
 POST /api/leads/{id}/skiptrace    — run skip trace for a lead

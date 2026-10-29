@@ -84,6 +84,24 @@ SOURCE_DIRECTORY: list[dict[str, str]] = [
         "state": "",
         "county": "",
     },
+    {
+        "name": "MLS Active Listings — by city (RentCast)",
+        "source_type": "rentcast",
+        "url": "https://api.rentcast.io/v1/listings/sale",
+        "description": "Active for-sale listings from MLS feeds (MLS name + number, list price, days on market, listing agent). Note: mls.com itself has no data — it links to agents' sites. Requires RentCast API key; 1 call per run.",
+        "search_hint": '{"city":"Dallas","state":"TX","status":"Active","limit":100}',
+        "state": "",
+        "county": "",
+    },
+    {
+        "name": "MLS Stale Listings — 90+ days on market (RentCast)",
+        "source_type": "rentcast",
+        "url": "https://api.rentcast.io/v1/listings/sale",
+        "description": "Listings sitting 90+ days are a classic motivated-seller list: keeps only results with daysOnMarket ≥ minDaysOnMarket. Requires RentCast API key; 1 call per run.",
+        "search_hint": '{"city":"Detroit","state":"MI","status":"Active","limit":500,"minDaysOnMarket":90}',
+        "state": "",
+        "county": "",
+    },
 
     {
         "name": "Harris County TX Parcels (free — ArcGIS)",
@@ -486,7 +504,9 @@ def scrape_rentcast(url: str, search_params: dict[str, Any], api_key: str | None
         )
 
     # Build query params — only pass non-empty values
-    params = {k: str(v) for k, v in search_params.items() if v is not None and v != ""}
+    # Our own filter (applied after the fetch) — not a RentCast parameter.
+    params = {k: str(v) for k, v in search_params.items()
+              if v is not None and v != "" and k != "minDaysOnMarket"}
 
     headers = {"X-Api-Key": key, "Accept": "application/json"}
     with httpx.Client(timeout=30, follow_redirects=True, headers=headers) as client:
@@ -718,14 +738,25 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
                 pass
 
         adapter = SOURCE_ADAPTERS.get(source.source_type, scrape_html)
-        raw_text = adapter(source.url, params, source.api_key)
+        api_key = source.api_key
+        if source.source_type == "rentcast":
+            from app.services.property_data import PropertyDataError, rentcast_key, record_usage, usage
+            api_key = api_key or rentcast_key(db)
+            u = usage(db)
+            if u["calls"] >= u["limit"]:
+                raise PropertyDataError(f"RentCast monthly budget reached ({u['calls']}/{u['limit']}).")
+            record_usage(db)
+        raw_text = adapter(source.url, params, api_key)
 
         # Parse raw data into structured records using LLM or HTML parser
         records = llm_parse_raw_data(raw_text)
 
-        # Normalize RentCast records to our schema
+        # Normalize RentCast records (property records or MLS listings) to our schema
         if source.source_type == "rentcast":
             records = [_normalize_rentcast(r) for r in records if isinstance(r, dict)]
+            min_dom = params.get("minDaysOnMarket")
+            if min_dom not in (None, ""):
+                records = [r for r in records if (r.get("days_on_market") or 0) >= int(min_dom)]
 
         # Normalize ArcGIS feature-service records to our schema
         if source.source_type == "arcgis":
@@ -788,6 +819,24 @@ def _normalize_rentcast(r: dict[str, Any]) -> dict[str, Any]:
         record["mailing_city"] = mail.get("city")
         record["mailing_state"] = mail.get("state")
         record["mailing_zip"] = mail.get("zipCode")
+
+    # MLS listing fields (from /listings/sale)
+    if r.get("mlsNumber") or "daysOnMarket" in r:
+        record.update({
+            "list_price": r.get("price"),
+            "listing_status": r.get("status"),
+            "days_on_market": r.get("daysOnMarket"),
+            "mls": " #".join(str(v) for v in (r.get("mlsName"), r.get("mlsNumber")) if v) or None,
+            "listing_agent": (r.get("listingAgent") or {}).get("name"),
+        })
+        record["_listing"] = {k: r.get(k) for k in (
+            "status", "price", "daysOnMarket", "listedDate", "mlsName", "mlsNumber",
+            "listingAgent", "listingOffice", "latitude", "longitude")}
+    elif r.get("taxAssessments") or r.get("propertyTaxes") or r.get("owner"):
+        # Keep the public-record detail so imported leads get tax/owner data free.
+        record["_record"] = {k: r.get(k) for k in (
+            "formattedAddress", "latitude", "longitude", "county", "propertyType", "owner",
+            "ownerOccupied", "taxAssessments", "propertyTaxes", "lastSalePrice", "lastSaleDate")}
 
     return record
 
@@ -907,6 +956,22 @@ def import_scrape_results(
             taxes_owed=_to_float(data.get("taxes_owed")),
             owner_is_llc=bool(data.get("owner_is_llc", False)),
         )
+
+        # Keep MLS listing / public-record detail captured by the scrape.
+        if data.get("_listing") or data.get("_record"):
+            from app.models import PropertyRecord
+            from app.services.property_data import apply_listing, apply_property_record, estimate_mortgage
+            rec = lead.property_record or PropertyRecord(lead_id=lead.id)
+            if lead.property_record is None:
+                db.add(rec)
+                lead.property_record = rec
+            if data.get("_record"):
+                apply_property_record(rec, data["_record"])
+                rec.est_mortgage_balance, rec.debt_basis = estimate_mortgage(rec.last_sale_price, rec.last_sale_date)
+            if data.get("_listing"):
+                apply_listing(rec, data["_listing"])
+            rec.source = "rentcast"
+            rec.fetched_at = utcnow()
 
         if add_lead_to_list(db, lead, source_list):
             added += 1

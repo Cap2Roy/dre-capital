@@ -310,10 +310,31 @@ SETTING_DEFS: dict[str, dict] = {
     },
     "rentcast_api_key": {
         "label": "RentCast API Key",
-        "category": "llm",
+        "category": "property",
         "is_secret": True,
         "env": "RENTCAST_API_KEY",
-        "description": "API key for RentCast property data API (free tier: 50 calls/mo). Get one at https://app.rentcast.io/api",
+        "description": "RentCast property data: public records, tax, value estimate, and MLS listings. Get one at https://app.rentcast.io/api",
+    },
+    "rentcast_monthly_limit": {
+        "label": "RentCast Monthly Call Budget",
+        "category": "property",
+        "is_secret": False,
+        "env": "RENTCAST_MONTHLY_LIMIT",
+        "description": "Stop calling RentCast after this many requests per calendar month (free plan: 50). Each property refresh uses up to 3.",
+    },
+    "rentcast_usage": {
+        "label": "RentCast Usage This Month",
+        "category": "internal",
+        "is_secret": False,
+        "env": "",
+        "description": "Internal counter {month, calls}.",
+    },
+    "google_maps_api_key": {
+        "label": "Google Maps API Key",
+        "category": "property",
+        "is_secret": True,
+        "env": "GOOGLE_MAPS_API_KEY",
+        "description": "Street View Static + Maps Static APIs — property photos. The key stays on the server.",
     },
     "default_call_flow_id": {
         "label": "Default Call Flow",

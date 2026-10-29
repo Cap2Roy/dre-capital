@@ -27,7 +27,7 @@ REGION="${REGION:-us-central1}"
 SERVICE_NAME="dre-capital"
 SESSION_SECRET="dre-capital-secret-key"
 # Optional API keys kept in Secret Manager: ENV_VAR=secret-name
-OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key"
+OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key GOOGLE_MAPS_API_KEY=dre-capital-maps-api-key"
 
 echo "=== DRE-Capital GCP Deployment ==="
 echo "Project:  $PROJECT_ID"

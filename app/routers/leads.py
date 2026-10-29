@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -165,3 +165,86 @@ def lead_timeline(lead_id: str, db: Session = Depends(get_db)):
                                                      "status": c.status, "price": c.contract_price}))
     events.sort(key=lambda e: e[0], reverse=True)
     return {"events": [{**ev, "at": iso_utc(at)} for at, ev in events]}
+
+
+# ── Property data, call brief, photo, AI-call consent ────────────────────────
+
+def _lead_or_404(db: Session, lead_id: str) -> Lead:
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    return lead
+
+
+@router.get("/{lead_id}/brief")
+def lead_brief(lead_id: str, db: Session = Depends(get_db)):
+    """Everything the dialer / AI agent needs: value, tax, debt, MLS status, photo, number checks."""
+    from app.services.property_data import brief
+    return brief(db, _lead_or_404(db, lead_id))
+
+
+@router.post("/{lead_id}/property-data")
+def refresh_property_data(lead_id: str, db: Session = Depends(get_db)):
+    """Pull public records, value estimate, and MLS listing from RentCast (up to 3 calls)."""
+    from app.services.property_data import PropertyDataError, brief, enrich
+    lead = _lead_or_404(db, lead_id)
+    try:
+        enrich(db, lead)
+    except PropertyDataError as exc:
+        db.commit()  # keep usage counter + recorded error
+        raise HTTPException(502, str(exc))
+    db.commit()
+    db.refresh(lead)
+    return brief(db, lead)
+
+
+@router.get("/{lead_id}/photo")
+def lead_photo(lead_id: str, db: Session = Depends(get_db)):
+    """Street View photo of the house (satellite view if there's no Street View)."""
+    from fastapi.responses import Response
+    from app.services.property_data import PropertyDataError, photo
+    lead = _lead_or_404(db, lead_id)
+    try:
+        data, media = photo(db, lead)
+    except PropertyDataError as exc:
+        raise HTTPException(404, str(exc))
+    db.commit()
+    return Response(content=data, media_type=media, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.put("/{lead_id}/ai-consent")
+def set_ai_consent(lead_id: str, payload: dict, request: Request, db: Session = Depends(get_db)):
+    """Record (or remove) the owner's prior express written consent to AI-voice calls."""
+    from app.timeutil import utcnow
+    lead = _lead_or_404(db, lead_id)
+    if payload.get("remove"):
+        lead.ai_call_consent_at = lead.ai_call_consent_source = lead.ai_call_consent_by = None
+    else:
+        source = (payload.get("source") or "").strip()
+        if len(source) < 10:
+            raise HTTPException(400, "Describe where the written consent came from (form, date, wording) — at least 10 characters.")
+        user = getattr(request.state, "user", None)
+        lead.ai_call_consent_at = utcnow()
+        lead.ai_call_consent_source = source[:500]
+        lead.ai_call_consent_by = user.id if user else None
+    db.commit()
+    return {"ai_consent": {"at": iso_utc(lead.ai_call_consent_at), "source": lead.ai_call_consent_source}
+            if lead.ai_call_consent_at else None}
+
+
+@router.get("/property-data/status")
+def property_data_status(check: bool = False, db: Session = Depends(get_db)):
+    """RentCast budget/usage + whether keys are set; ``check=true`` validates the Maps key (free metadata call)."""
+    import httpx
+    from app.services.property_data import MAPS_BASE, maps_key, rentcast_key, usage
+    out = {"rentcast": {"configured": bool(rentcast_key(db)), **usage(db)},
+           "maps": {"configured": bool(maps_key(db)), "ok": None, "error": None}}
+    if check and out["maps"]["configured"]:
+        try:
+            meta = httpx.get(f"{MAPS_BASE}/streetview/metadata", timeout=15,
+                             params={"location": "Dallas, TX", "key": maps_key(db)}).json()
+            out["maps"]["ok"] = meta.get("status") in ("OK", "ZERO_RESULTS")
+            out["maps"]["error"] = None if out["maps"]["ok"] else f"{meta.get('status')}: {meta.get('error_message', '')}"
+        except Exception as exc:
+            out["maps"]["ok"], out["maps"]["error"] = False, str(exc)
+    return out

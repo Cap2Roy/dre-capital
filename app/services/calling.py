@@ -98,6 +98,38 @@ def initiate_call(
     return call
 
 
+def owner_confirmed_in_answers(call: Call) -> bool:
+    """Did the call-guide answer to the owner question say yes?"""
+    if not call.answers or not call.call_flow:
+        return False
+    from app.services.call_guide import _NO_START, _YES, classify
+    questions = json.loads(call.call_flow.questions or "[]")
+    for idx, ans in json.loads(call.answers).items():
+        try:
+            if classify(questions[int(idx)]) == "owner":
+                a = ans.strip().lower()
+                return bool(_YES.search(a)) and not _NO_START.match(a)
+        except (ValueError, IndexError):
+            continue
+    return False
+
+
+def update_phone_verification(db: Session, call: Call, phone: Optional[Phone]) -> None:
+    """Learn from the call whether this number reaches the property's owner."""
+    from app.models import PhoneQuality
+    from app.timeutil import utcnow
+    if phone is None:
+        return
+    if call.outcome == CallOutcome.WRONG_NUMBER:
+        phone.quality = PhoneQuality.BAD
+        phone.owner_confirmed_at = None
+    elif owner_confirmed_in_answers(call):
+        phone.owner_confirmed_at = utcnow()
+        if phone.quality in (PhoneQuality.UNVERIFIED, PhoneQuality.STALE):
+            phone.quality = PhoneQuality.GOOD
+    db.flush()
+
+
 def log_call_outcome(
     db: Session,
     call: Call,
@@ -138,13 +170,12 @@ def log_call_outcome(
     from app.models import FollowUp, LeadStatus
     lead = call.lead
 
-    if outcome == CallOutcome.DNC_REQUEST:
-        # Honor opt-out instantly.  Call has a phone_id FK but no relationship —
-        # look the phone up directly.
-        phone = db.get(Phone, call.phone_id) if call.phone_id else None
-        if phone:
-            from app.services.skiptrace import mark_opted_out
-            mark_opted_out(db, phone)
+    phone = db.get(Phone, call.phone_id) if call.phone_id else None
+    if outcome == CallOutcome.DNC_REQUEST and phone:
+        # Honor opt-out instantly.
+        from app.services.skiptrace import mark_opted_out
+        mark_opted_out(db, phone)
+    update_phone_verification(db, call, phone)
 
     if outcome == CallOutcome.VERBAL_YES:
         lead.status = LeadStatus.WARM

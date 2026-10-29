@@ -21,3 +21,4 @@ build/
 
 # Call recordings (local files; recreated per container)
 recordings/
+photos/

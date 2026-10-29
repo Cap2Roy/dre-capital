@@ -32,6 +32,7 @@
           <label class="form-label" for="live-lead">Rehearse a property (optional)</label>
           <select id="live-lead" class="form-select lead-select"><option value="">— Generic seller conversation —</option></select>
           <div class="form-hint">You play the seller; the agent uses this lead's address and facts on record (never our offer numbers).</div>
+          <div id="live-lead-brief" class="mt-2"></div>
         </div>
         <button type="submit" class="btn btn-gold" id="live-start-btn">🎙 Start live call</button>
         <div class="form-hint mt-2">Uses your microphone. Headphones give the cleanest audio. Calls end automatically after 6 minutes.</div>
@@ -78,6 +79,7 @@
       <div class="form-group">
         <label class="form-label" for="ai-lead">Rehearse a property (optional)</label>
         <select id="ai-lead" class="form-select lead-select"><option value="">— Generic seller conversation —</option></select>
+        <div id="ai-lead-brief" class="mt-2"></div>
       </div>
       <div class="form-group">
         <label class="text-sm"><input type="checkbox" id="ai-consent">
@@ -164,6 +166,20 @@ async function init() {
     if (first) document.querySelectorAll("#live-name, #ai-name").forEach(i => i.placeholder = first);
   }).catch(() => {});
   loadHistory();
+  for (const [sel, box] of [["live-lead", "live-lead-brief"], ["ai-lead", "ai-lead-brief"]]) {
+    document.getElementById(sel).addEventListener("change", (e) => showLeadBrief(e.target.value, box));
+  }
+  const openId = new URLSearchParams(location.search).get("call");
+  if (openId) openCall(openId);
+}
+
+// The property the agent will talk about — same brief the human dialer sees.
+async function showLeadBrief(leadId, boxId) {
+  const box = document.getElementById(boxId);
+  if (!leadId) { box.innerHTML = ""; return; }
+  box.innerHTML = '<div class="text-sm text-muted">Loading property…</div>';
+  try { box.innerHTML = renderPropertyBrief(await API.get(`/api/leads/${leadId}/brief`), { compact: true }); }
+  catch (e) { box.innerHTML = `<div class="text-sm text-danger">${escHtml(e.message)}</div>`; }
 }
 
 // ════════════════ Live call in the browser (Gemini Live) ════════════════
@@ -398,7 +414,9 @@ function showCall(call, startPolling) {
   const live_ = !FINAL.has(call.status) && !isLiveCall;
   document.getElementById("ai-live-body").innerHTML = `
     <div class="gc-bar">
-      <span>${isLiveCall ? "🎙 Browser call (Gemini Live)" : "📞 " + escHtml(fmtPhone(call.to_number))}</span>
+      <span>${isLiveCall ? "🎙 Browser call (Gemini Live)" : (call.phone_id ? "🏠 Owner " : "📞 ") + escHtml(fmtPhone(call.to_number))}</span>
+      ${call.outcome ? `<span class="badge badge-info">${escHtml(call.outcome.replace(/_/g, " "))}</span>` : ""}
+      ${call.lead_id ? `<a href="/leads/${call.lead_id}" class="text-sm">Open lead →</a>` : ""}
       <span>Asking for <strong>${escHtml(call.greet_name || "")}</strong></span>
       ${call.voice ? `<span class="text-muted">Voice: ${escHtml(call.voice)}</span>` : ""}
       <span id="ai-timer" class="col-mono">${live_ ? (_startedAt ? fmtDur(Math.floor((Date.now() - _startedAt) / 1000)) : "") : fmtDur(call.duration_seconds)}</span>
@@ -505,7 +523,7 @@ async function loadHistory() {
     el.innerHTML = `<table class="data-table"><thead><tr><th>When</th><th>Type</th><th>Asked for</th><th>Status</th><th>Score</th><th>Length</th><th></th></tr></thead><tbody>` +
       calls.map(c => `<tr>
         <td class="text-sm">${fmtDateTime(c.created_at)}</td>
-        <td class="text-sm">${c.provider === "vertex" ? "🎙 Live (Gemini)" : "📞 " + escHtml(fmtPhone(c.to_number))}</td>
+        <td class="text-sm">${c.provider === "vertex" ? "🎙 Live (Gemini)" : (c.phone_id ? "🏠 Owner " : "📞 ") + escHtml(fmtPhone(c.to_number))}${c.outcome ? ` · ${escHtml(c.outcome.replace(/_/g, " "))}` : ""}</td>
         <td>${escHtml(c.greet_name || "")}</td>
         <td>${aiStatusBadge(c.status)}</td>
         <td>${scoreBadge(c.score) || '<span class="text-muted">—</span>'}</td>

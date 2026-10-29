@@ -19,9 +19,26 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.5.0"
+CURRENT_VERSION = "2.6.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.6.0",
+        "date": "2026-10-29",
+        "title": "Property data on every lead, MLS listings, call brief, verified AI calls",
+        "sections": {
+            "Added": [
+                "Property card on every lead: estimated value with range, assessed value, annual property tax (with history), taxes owed, estimated equity, MLS listing status (price, days on market, MLS number, listing agent), owner of public record, and a photo of the house (Google Street View, satellite when there's none). 'Refresh property data' pulls it from RentCast (3 calls).",
+                "Debt on the house: delinquent taxes and pre-foreclosure filings from county lists, what the seller said about their mortgage on a call, and an estimated mortgage balance from the last sale (clearly labeled as an estimate, not a recorded lien).",
+                "MLS listings in the scraper: 'MLS Active Listings' and 'MLS Stale Listings (90+ days)' sources via RentCast's MLS-fed listings; imported leads keep their MLS number, price, days on market, and agent. (mls.com has no data of its own — it links out to agent sites and a paid foreclosure site.)",
+                "Call brief: the guided-call screen and AI Test Call show the property (photo, value, tax, debt, MLS status) and the number check before you dial; the AI agent's instructions now include the property's facts (never dollar figures).",
+                "Number verification for every phone: belongs to this lead, not DNC / opted out, never reported as a wrong number, owner confirmed on a call, owner matches public records (catches numbers of previous owners), and 8 am–9 pm at the property.",
+                "AI calls to the owner: '🤖 AI call' appears only on numbers that pass every check — including written consent to AI calls recorded on the lead (TCPA). The agent first confirms it reached the right person about the right property, and ends the call on a wrong number or stop request. Afterward the call is logged on the lead and the number is marked confirmed, wrong (bad), or opted out.",
+                "Human calls teach the system too: answering 'yes' to the owner question confirms the number; a wrong-number outcome marks it bad.",
+                "Settings → Property Data: RentCast key, monthly call budget with usage, Google Maps key, and a test.",
+            ],
+        },
+    },
     {
         "version": "2.5.0",
         "date": "2026-10-21",
