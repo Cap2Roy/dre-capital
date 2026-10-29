@@ -19,7 +19,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
 | **Rehearse with AI** | **Talk to Sam live** (Google **Gemini Live on Vertex AI**): a real-time voice agent runs your call flow in the browser — you play the seller over your mic, interrupt freely, watch the live transcript, then get the recording, transcript, and an automatic Hot/Warm/Cold score. Uses the app's Google Cloud service account (no API key). Optional **phone test call** via Bland AI (needs a Bland key; lead numbers blocked — AI-voice calls to sellers need prior written consent). |
-| **Agents** | **Agents page** (`/agents`): add **calling**, **scraping**, and **script-writing** agents. Each gets its own API key or the **default key** tag (shared per-provider keys set by an admin). **Calling module:** Twilio dials and the call is bridged to **Grok Voice** (xAI; μ-law straight through) or **Gemini Live** (μ-law ⇄ PCM). The agent speaks the call flow, handles interruptions, hangs up itself (`end_call` tool: wrong number / stop / voicemail / done), and skips answering machines; you get the recording, transcript, score, and live listen. **Bland AI** is the alternative provider. **Scraping agents** crawl a site within robots.txt (next pages, up to a limit), extract and score properties with an LLM (**Grok** / Gemini / OpenAI / Claude / OpenAI-compatible) — long lists are read in parallel sections so no rows are dropped, and sale date, case number, lender and amount owed are captured — and feed the Scraper. With an xAI key, **Grok Scout** (grok-4.20-non-reasoning) and **Grok Script Writer** (grok-4.7) are created as the default agents. **Script-writing agents** draft or improve call flows from a brief and call history. |
+| **Agents** | **Agents page** (`/agents`): add **calling**, **scraping**, and **script-writing** agents. Each gets its own API key or the **default key** tag (shared per-provider keys set by an admin). **Calling module:** Twilio dials and the call is bridged to **Grok Voice** (xAI; μ-law straight through) or **Gemini Live** (μ-law ⇄ PCM) — Twilio + Grok Voice is the default. Agents authenticate with a dedicated **Twilio API key**; admins buy numbers per agent or verify an existing number (e.g. the Quo line) as caller ID, and callbacks to agent numbers forward to the Quo line. **Quo Sona** is the Quo option: Quo's AI agent calls from your Quo number (OAuth "Connect Quo" to Quo's MCP server; the flow is condensed into Sona's task). The agent speaks the call flow, handles interruptions, hangs up itself (`end_call` tool: wrong number / stop / voicemail / done), and skips answering machines; you get the recording, transcript, score, and live listen. **Bland AI** is the alternative provider. **Scraping agents** crawl a site within robots.txt (next pages, up to a limit), extract and score properties with an LLM (**Grok** / Gemini / OpenAI / Claude / OpenAI-compatible) — long lists are read in parallel sections so no rows are dropped, and sale date, case number, lender and amount owed are captured — and feed the Scraper. With an xAI key, **Grok Scout** (grok-4.20-non-reasoning) and **Grok Script Writer** (grok-4.7) are created as the default agents. **Script-writing agents** draft or improve call flows from a brief and call history. |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
 | **Schedule & remind** | Meeting scheduling + **reminder notifications** (SMS, fired by the scheduler before each meeting). **Area-focus** setting defaults the dial queue to a primary state (MI). |
@@ -60,6 +60,7 @@ skip-trace provider, or Cloud SQL Postgres.
 | `TWILIO_ACCOUNT_SID` | (empty) | Twilio click-to-call; also the default key for Twilio + Gemini calling agents. Empty = dry-run. |
 | `TWILIO_AUTH_TOKEN` | (empty) | Twilio auth (also verifies `X-Twilio-Signature` on AI-call callbacks) |
 | `TWILIO_FROM_NUMBER` | (empty) | Caller ID number |
+| `TWILIO_API_KEY_SID` / `TWILIO_API_KEY_SECRET` | (empty) | Twilio API key (SK…) the AI calling agents use instead of the auth token — create a dedicated key, not your main one |
 | `XAI_API_KEY` | (empty) | xAI Grok: default key for Grok agents (scraping, scripts) and Grok Voice calls; also the scraper's LLM when `LLM_API_KEY` is unset |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | (empty) | Default keys for OpenAI / Claude agents (or set them on the Agents page) |
 | `APP_BASE_URL` | `http://localhost:8000` | Public URL for Twilio callbacks and the AI-call media stream (`wss://…/api/ai-calls/twilio/stream`) — must be HTTPS in production |
@@ -75,7 +76,7 @@ PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh                       # code-only 
 QUO_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh       # set/rotate the company Quo key
 BLAND_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh     # set the AI voice agent (Bland) key
 GOOGLE_MAPS_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # house photos (Street View Static + Maps Static)
-TWILIO_ACCOUNT_SID=AC... TWILIO_AUTH_TOKEN=... TWILIO_FROM_NUMBER=+1... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # default Twilio key for calling agents
+TWILIO_ACCOUNT_SID=AC... TWILIO_API_KEY_SID=SK... TWILIO_API_KEY_SECRET=... TWILIO_FROM_NUMBER=+1... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # default Twilio key for calling agents
 XAI_API_KEY=xai-... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # Grok: scraping + script agents, Grok Voice calls
 ```
 
@@ -139,7 +140,8 @@ GET  /api/ai-calls/{id}           — status, duration, transcript, summary, sco
 POST /api/ai-calls/{id}/listen    — live audio WebSocket URL (Bland: PCM16 LE 16 kHz; Twilio + Gemini: 1-byte track + PCM16)
 POST /api/ai-calls/{id}/stop      — hang up
 GET  /api/ai-calls/{id}/recording — stream the recording
-POST /api/ai-calls/twilio/status  — Twilio call progress + answering-machine callback (public, X-Twilio-Signature)
+POST /api/ai-calls/twilio/status  — Twilio call progress + answering-machine callback (public; signed token in the URL)
+POST /api/ai-calls/twilio/inbound — sellers calling an agent number back → forwarded to the Quo line
 WS   /api/ai-calls/twilio/stream  — Twilio Media Stream ⇄ Grok Voice / Gemini Live bridge (signed, 15-min stream token)
 WS   /api/ai-calls/{id}/listen-ws — browser live listen for Twilio + Gemini calls (session cookie)
 GET  /api/agents/providers        — agent kinds, providers, key fields, Gemini voices
@@ -150,6 +152,12 @@ DELETE /api/agents/{id}           — delete (creator or admin)
 POST /api/agents/{id}/test        — check the key / provider (LLM ping, Bland balance, Twilio number)
 GET  /api/agents/defaults         — which default keys are set
 PUT  /api/agents/defaults         — set default keys per provider (admin)
+GET  /api/agents/twilio/numbers   — Twilio numbers + verified caller IDs and the agents using them (admin)
+GET  /api/agents/twilio/available — search numbers to buy (?area_code=) (admin)
+POST /api/agents/twilio/numbers   — buy a number, optionally for one agent (admin; needs Twilio Trust Hub approval)
+POST /api/agents/twilio/caller-ids — verify an existing number as caller ID (Twilio calls it; enter the code) (admin)
+GET  /api/agents/quo/connect      — Connect Quo (OAuth 2.1 + PKCE to Quo's MCP server) for Sona calls (admin)
+GET  /api/agents/quo/status       — Quo connection + Quo numbers
 POST /api/scraper/agent-run       — scraping agent crawls {url, goal?} (robots.txt respected) → scored results
 POST /api/call-flows/draft        — script-writing agent drafts a new flow or improves one (not saved; admin)
 WS   /api/live-agent/ws           — live agent call: mic PCM16 16 kHz in, agent PCM16 24 kHz + JSON events out
@@ -209,6 +217,8 @@ dre-capital/
 │   │   ├── call_guide.py     — property-aware call guide + Hot/Warm/Cold scoring
 │   │   ├── agents.py         — provider registry, own vs default-key credentials, LLM client
 │   │   ├── phone_agent.py    — calling module: Twilio dial + media stream ⇄ Grok Voice / Gemini Live
+│   │   ├── twilio_numbers.py — buy / verify agent numbers, inbound forwarding to the Quo line
+│   │   ├── quo_sona.py       — Quo Sona calls: OAuth to Quo's MCP server, start/poll/cancel agent calls
 │   │   ├── scraping_agent.py — robots-aware crawl + LLM extraction and scoring
 │   │   ├── script_agent.py   — call-flow drafting from a brief + call history
 │   │   ├── buyers.py         — buy-box matching

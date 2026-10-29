@@ -21,7 +21,7 @@ from app.routers import (
 from app.services.scheduler import scheduler_loop
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/messages/inbound", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/ai-calls/twilio/inbound", "/api/messages/inbound", "/static"}
 
 
 def _register_quo_webhooks_on_startup() -> None:

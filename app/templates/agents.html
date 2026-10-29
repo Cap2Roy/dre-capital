@@ -13,6 +13,31 @@
 
 <div id="agents-list"><div class="empty-state">Loading agents…</div></div>
 
+{% if is_admin %}
+<div class="card mt-4" id="numbers-card">
+  <div class="card-header">📞 Phone numbers <span class="text-sm text-muted" style="font-weight:normal">— Twilio numbers calling agents dial from</span></div>
+  <div class="card-body">
+    <div id="numbers-body"><div class="empty-state text-sm">Loading…</div></div>
+    <div class="grid-2 mt-4">
+      <div>
+        <h4 class="mb-2">Buy a number</h4>
+        <div class="flex gap-2"><input id="num-area" class="form-input" placeholder="Area code, e.g. 469" maxlength="3" style="max-width:180px">
+          <button class="btn btn-outline" onclick="searchNumbers()">Search</button></div>
+        <div id="num-results" class="mt-2"></div>
+        <div class="form-hint mt-2">Local numbers cost about $1.15/month on your Twilio account. Sellers who call a number back are connected to your Quo line.</div>
+      </div>
+      <div>
+        <h4 class="mb-2">Use a number you already have</h4>
+        <div class="flex gap-2"><input id="cid-number" class="form-input" placeholder="e.g. your Quo line (707) 801-0582" style="max-width:260px">
+          <button class="btn btn-outline" onclick="verifyCallerId()">Verify</button></div>
+        <div id="cid-result" class="mt-2"></div>
+        <div class="form-hint mt-2">Twilio calls the number; answer and type the code shown here. Agents can then call with it as caller ID.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card mt-4" id="defaults-card">
   <div class="card-header">🔑 Default keys <span class="text-sm text-muted" style="font-weight:normal">— used by every agent tagged "default key"</span></div>
   <div class="card-body" id="defaults-body"><div class="empty-state text-sm">Loading…</div></div>
@@ -28,15 +53,80 @@ const KIND_INFO = {
   scraping: { icon: "🕸", title: "Scraping agents", blurb: "Read a website (county lists, listings), follow next pages, and pull properties with motivated-seller signals into the Scraper." },
   scripting: { icon: "✍️", title: "Script-writing agents", blurb: "Draft new call flows or improve existing ones from your brief and past call results (Settings → Call Flows)." },
 };
-let META = null, AGENTS = [], FLOWS = [];
+let META = null, AGENTS = [], FLOWS = [], QUO = { connected: false, numbers: [] }, NUMBERS = { numbers: [] };
 
 async function load() {
-  [META, AGENTS, FLOWS] = await Promise.all([
+  [META, AGENTS, FLOWS, QUO] = await Promise.all([
     META ? META : API.get("/api/agents/providers"), API.get("/api/agents"), API.get("/api/call-flows?active=true").catch(() => []),
+    API.get("/api/agents/quo/status").catch(() => ({ connected: false, numbers: [] })),
   ]);
   renderAgents();
   loadDefaults();
+  if (IS_ADMIN) loadNumbers();
 }
+
+// ── Phone numbers (Twilio) ──
+async function loadNumbers() {
+  const el = document.getElementById("numbers-body");
+  try {
+    NUMBERS = await API.get("/api/agents/twilio/numbers");
+    el.innerHTML = NUMBERS.numbers.length
+      ? `<table class="data-table"><thead><tr><th>Number</th><th>Type</th><th>Used by</th></tr></thead><tbody>${NUMBERS.numbers.map(n => `<tr>
+          <td class="col-mono">${escHtml(fmtPhone(n.number))} ${n.is_default ? '<span class="badge badge-gold">default</span>' : ""}</td>
+          <td>${n.type === "verified" ? '<span class="badge badge-info">Verified caller ID</span>' : '<span class="badge badge-neutral">Twilio number</span>'}</td>
+          <td class="text-sm">${n.agents.length ? n.agents.map(escHtml).join(", ") : '<span class="text-muted">—</span>'}</td></tr>`).join("")}</tbody></table>`
+      : '<div class="empty-state text-sm">No numbers yet — buy one or verify a number you already have.</div>';
+  } catch (e) {
+    NUMBERS = { numbers: [] };
+    el.innerHTML = `<div class="gc-context">${escHtml(e.message.replace(/^\d+\s*/, ""))}</div>`;
+  }
+}
+
+async function searchNumbers() {
+  const box = document.getElementById("num-results");
+  box.innerHTML = '<span class="text-sm text-muted">Searching…</span>';
+  try {
+    const list = await API.get(`/api/agents/twilio/available?area_code=${encodeURIComponent(document.getElementById("num-area").value.trim())}`);
+    const calling = AGENTS.filter(a => a.kind === "calling" && (a.provider === "twilio_grok" || a.provider === "twilio_gemini"));
+    box.innerHTML = list.length ? list.map((n, i) => `<div class="flex gap-2 mt-2" style="align-items:center">
+        <span class="col-mono">${escHtml(fmtPhone(n.number))}</span><span class="text-xs text-muted">${escHtml([n.locality, n.region].filter(Boolean).join(", "))}</span>
+        <select id="buy-agent-${i}" class="form-select" style="max-width:200px"><option value="">Default caller ID</option>
+          ${calling.map(a => `<option value="${a.id}">For ${escHtml(a.name)}</option>`).join("")}</select>
+        <button class="btn btn-gold btn-sm" data-num="${escHtml(n.number)}" onclick="buyNumber(this.dataset.num, ${i})">Buy</button></div>`).join("")
+      : '<span class="text-sm text-muted">No numbers available — try another area code.</span>';
+  } catch (e) { box.innerHTML = `<div class="gc-context">${escHtml(e.message.replace(/^\d+\s*/, ""))}</div>`; }
+}
+
+async function buyNumber(number, i) {
+  if (!confirm(`Buy ${fmtPhone(number)} on your Twilio account (about $1.15/month)?`)) return;
+  try {
+    const r = await API.post("/api/agents/twilio/numbers", { number, agent_id: document.getElementById(`buy-agent-${i}`).value || null });
+    toast(`Bought ${fmtPhone(r.number)}`, "success");
+    document.getElementById("num-results").innerHTML = ""; load();
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+async function verifyCallerId() {
+  const box = document.getElementById("cid-result");
+  try {
+    const r = await API.post("/api/agents/twilio/caller-ids", { number: document.getElementById("cid-number").value });
+    box.innerHTML = `<div class="gc-summary">Twilio is calling <strong>${escHtml(fmtPhone(r.number))}</strong> now. Answer and enter this code:
+      <div style="font-size:28px;font-weight:700;letter-spacing:4px;margin-top:6px">${escHtml(r.validation_code || "")}</div>
+      <button class="btn btn-outline btn-sm mt-2" onclick="loadNumbers()">I entered it — refresh</button></div>`;
+  } catch (e) { box.innerHTML = `<div class="gc-context">${escHtml(e.message.replace(/^\d+\s*/, ""))}</div>`; }
+}
+
+async function disconnectQuo() {
+  if (!confirm("Disconnect Quo? Sona agents stop working until you connect again.")) return;
+  await API.delete("/api/agents/quo"); toast("Quo disconnected", ""); load();
+}
+
+(() => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("quo") === "connected") toast("Quo connected — Sona can now place calls.", "success");
+  if (q.get("quo_error")) toast("Quo: " + q.get("quo_error"), "error");
+  if (q.get("quo") || q.get("quo_error")) history.replaceState(null, "", "/agents");
+})();
 
 function keyTag(a) {
   if (a.use_default_key) return '<span class="badge badge-info">default key</span>';
@@ -123,11 +213,28 @@ function renderAgentFields(a, kind) {
   const field = (id, label, value, type = "text", ph = "") => `<div class="form-group"><label class="form-label">${label}</label>
       <input id="${id}" type="${type}" class="form-input" autocomplete="off" value="${escHtml(value || "")}" placeholder="${escHtml(ph)}"></div>`;
   let keys = "";
-  if (!p.fields.length) keys = '<div class="form-hint mb-4">No key needed — runs on this app\'s Google Cloud account.</div>';
-  else if (useDefault) keys = '<div class="form-hint mb-4">Uses the default key below (Default keys).</div>';
-  else {
+  if (provider === "quo_sona") {
+    // Sona calls through the Quo connection; the agent only picks which Quo number it calls from.
+    const nums = QUO.numbers || [];
+    keys = `${QUO.connected ? "" : '<div class="form-hint mb-4" style="color:var(--warning)">Quo isn\'t connected yet — an admin can click <strong>Connect Quo</strong> under Default keys.</div>'}
+      <div class="form-group"><label class="form-label">Call from Quo number</label><select id="ag-from" class="form-select">
+        <option value="">Default Quo line${QUO.default_number ? " (" + escHtml(QUO.default_number) + ")" : ""}</option>
+        ${nums.map(n => `<option value="${escHtml(n.number)}" ${n.number === a.from_number ? "selected" : ""}>${escHtml(n.number)}${n.name ? " — " + escHtml(n.name) : ""}</option>`).join("")}</select></div>`;
+  } else if (!p.fields.length) keys = '<div class="form-hint mb-4">No key needed — runs on this app\'s Google Cloud account.</div>';
+  else if (useDefault) {
+    keys = '<div class="form-hint mb-4">Uses the default key below (Default keys).</div>';
+    if (p.fields.includes("from_number")) {
+      // Shared Twilio account, but each agent can call from its own number.
+      const nums = (NUMBERS.numbers || []).filter(n => n.voice);
+      keys += `<div class="form-group"><label class="form-label">Calls from</label><select id="ag-from" class="form-select">
+        <option value="">Default number${NUMBERS.default_from_number ? " (" + escHtml(NUMBERS.default_from_number) + ")" : ""}</option>
+        ${nums.map(n => `<option value="${escHtml(n.number)}" ${n.number === a.from_number ? "selected" : ""}>${escHtml(n.number)} — ${n.type === "verified" ? "verified caller ID" : "Twilio number"}</option>`).join("")}</select>
+        <div class="form-hint">Buy or verify numbers under Phone numbers below.</div></div>`;
+    }
+  } else {
     keys = '<div class="grid-2">';
     if (p.fields.includes("account_sid")) keys += field("ag-sid", "Twilio Account SID", same ? a.account_sid : "", "text", "AC…");
+    if (p.fields.includes("account_sid")) keys += field("ag-keysid", "Twilio API Key SID (blank = auth token)", same ? a.key_sid : "", "text", "SK…");
     if (p.fields.includes("api_key")) keys += field("ag-key", p.key_label, same && a.has_own_key ? "••••" : "", "password", "Paste key");
     if (p.fields.includes("from_number")) keys += field("ag-from", "Twilio phone number (caller ID)", same ? a.from_number : "", "text", "+12145551234");
     if (p.fields.includes("base_url")) keys += field("ag-base", "Base URL", same ? a.base_url : "", "text", "https://api.groq.com/openai/v1");
@@ -137,12 +244,15 @@ function renderAgentFields(a, kind) {
   let extra = "";
   if (kind === "calling") {
     const voices = provider === "twilio_gemini" ? META.gemini_voices : provider === "twilio_grok" ? META.grok_voices : [];
+    const voiceField = provider === "quo_sona"
+      ? '<div class="form-hint">Sona speaks with your Quo AI agent\'s voice.</div>'
+      : voices.length
+        ? `<select id="ag-voice" class="form-select"><option value="">Default</option>${voices.map(v => `<option ${v === a.voice ? "selected" : ""}>${escHtml(v)}</option>`).join("")}</select>`
+        : `<input id="ag-voice" class="form-input" value="${escHtml(a.voice || "")}" placeholder="Bland voice name (blank = default)">`;
     extra = `<div class="grid-2">
       <div class="form-group"><label class="form-label">Call flow (script)</label><select id="ag-flow" class="form-select">
         <option value="">Default call flow</option>${FLOWS.map(f => `<option value="${f.id}" ${f.id === a.call_flow_id ? "selected" : ""}>${escHtml(f.name)}</option>`).join("")}</select></div>
-      <div class="form-group"><label class="form-label">Voice</label>${voices.length
-        ? `<select id="ag-voice" class="form-select"><option value="">Default</option>${voices.map(v => `<option ${v === a.voice ? "selected" : ""}>${escHtml(v)}</option>`).join("")}</select>`
-        : `<input id="ag-voice" class="form-input" value="${escHtml(a.voice || "")}" placeholder="Bland voice name (blank = default)">`}</div></div>`;
+      <div class="form-group"><label class="form-label">Voice</label>${voiceField}</div></div>`;
   } else if (kind === "scraping") {
     extra = `<div class="form-group"><label class="form-label">Max pages per run</label><input id="ag-pages" type="number" min="1" max="25" class="form-input" value="${a.max_pages || 5}" style="max-width:140px"></div>`;
   }
@@ -160,6 +270,7 @@ async function saveAgent(id) {
   };
   if (v("ag-key") !== undefined && v("ag-key") !== "") body.api_key = v("ag-key");
   if (v("ag-sid") !== undefined) body.account_sid = v("ag-sid");
+  if (v("ag-keysid") !== undefined) body.key_sid = v("ag-keysid");
   if (v("ag-from") !== undefined) body.from_number = v("ag-from");
   if (v("ag-base") !== undefined) body.base_url = v("ag-base");
   if (kind === "calling") { body.call_flow_id = v("ag-flow") || null; body.voice = v("ag-voice") || null; }
@@ -189,7 +300,8 @@ async function deleteAgent(id) {
 
 // ── Default keys (admin) ──
 const DEFAULT_FIELDS = {
-  twilio_gemini: [["account_sid", "Twilio Account SID", "text"], ["api_key", "Twilio Auth Token", "password"], ["from_number", "Twilio phone number", "text"]],
+  twilio_gemini: [["account_sid", "Twilio Account SID (AC…)", "text"], ["key_sid", "Twilio API Key SID (SK…)", "text"],
+                  ["api_key", "API Key Secret (or Auth Token)", "password"], ["from_number", "Default caller ID (+1…)", "text"]],
   xai: [["api_key", "xAI API Key", "password"]],
   bland: [["api_key", "Bland API Key", "password"]],
   openai: [["api_key", "OpenAI API Key", "password"]],
@@ -204,8 +316,14 @@ async function loadDefaults() {
     Object.entries(d).map(([p, s]) => `<tr>
       <td>${escHtml(s.label)}</td>
       <td>${p === "gemini" ? '<span class="badge badge-success">✓ This app\'s Google Cloud</span>'
-          : s.set ? `<span class="badge badge-success">✓ Set</span>${s.from_number ? " " + escHtml(s.from_number) : ""}` : '<span class="badge badge-warning">Not set</span>'}</td>
-      ${IS_ADMIN ? `<td>${(DEFAULT_FIELDS[p] || []).map(([f, label, type]) =>
+          : s.set ? `<span class="badge badge-success">✓ ${p === "quo_sona" ? "Connected" : "Set"}</span>${s.from_number ? " " + escHtml(s.from_number) : ""}`
+          : (s.missing || []).length && (s.missing || []).length < (s.fields || []).length
+            ? `<span class="badge badge-warning">Key set · missing ${escHtml(s.missing.map(f => f === "from_number" ? "caller ID number" : f.replace(/_/g, " ")).join(", "))}</span>`
+          : `<span class="badge badge-warning">${p === "quo_sona" ? "Not connected" : "Not set"}</span>`}</td>
+      ${IS_ADMIN ? `<td>${p === "quo_sona"
+          ? (s.set ? '<button class="btn btn-outline btn-sm" onclick="disconnectQuo()">Disconnect Quo</button>'
+                   : '<a class="btn btn-gold btn-sm" href="/api/agents/quo/connect">Connect Quo</a> <span class="text-xs text-muted">Sign in to Quo and approve — lets Sona place calls</span>')
+          : (DEFAULT_FIELDS[p] || []).map(([f, label, type]) =>
           `<input class="form-input dk" data-p="${p}" data-f="${f}" type="${type}" autocomplete="off" placeholder="${escHtml(label)}${type === "password" && s.set ? " (set — leave blank to keep)" : ""}" style="margin:2px 0;max-width:340px">`).join("") || '<span class="text-muted text-sm">No key needed</span>'}</td>` : ""}
     </tr>`).join("") + `</tbody></table>` +
     (IS_ADMIN ? '<button class="btn btn-primary mt-4" onclick="saveDefaults()">Save default keys</button>' : '<div class="form-hint mt-2">Only admins can change default keys.</div>');

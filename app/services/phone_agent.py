@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Agent, AiCall, CallFlow, Lead
+from app.services.agents import twilio_auth
 
 log = logging.getLogger("uvicorn.error")
 TWILIO_API = "https://api.twilio.com/2010-04-01"
@@ -121,7 +122,9 @@ def _ws_url() -> str:
 
 
 def status_url(ai_call_id: str) -> str:
-    return f"{_base_url()}{STATUS_PATH}?ai_call_id={ai_call_id}"
+    # Our own signed token: Twilio's X-Twilio-Signature can only be checked with the account
+    # auth token, which an API-key setup doesn't have.
+    return f"{_base_url()}{STATUS_PATH}?ai_call_id={ai_call_id}&t={_signer.dumps({'s': ai_call_id})}"
 
 
 def _creds(db: Session, ai_call: AiCall) -> dict:
@@ -138,11 +141,11 @@ def _creds(db: Session, ai_call: AiCall) -> dict:
 def _twilio(creds: dict, method: str, path: str, data: Optional[list] = None) -> dict:
     url = f"{TWILIO_API}/Accounts/{creds['account_sid']}{path}"
     try:
-        r = httpx.request(method, url, data=data, auth=(creds["account_sid"], creds["api_key"]), timeout=20)
+        r = httpx.request(method, url, data=data, auth=twilio_auth(creds), timeout=20)
     except httpx.HTTPError as exc:
         raise PhoneAgentError(f"Twilio unreachable: {exc}") from exc
     if r.status_code == 401:
-        raise PhoneAgentError("Twilio rejected the Account SID / Auth Token.")
+        raise PhoneAgentError("Twilio rejected the Account SID / API key.")
     if r.status_code >= 400:
         try:
             msg = r.json().get("message")
@@ -183,13 +186,12 @@ def hang_up(db: Session, ai_call: AiCall) -> None:
         _twilio(_creds(db, ai_call), "POST", f"/Calls/{ai_call.provider_call_id}.json", [("Status", "completed")])
 
 
-def verify_twilio_signature(db: Session, ai_call: AiCall, url: str, params: dict, signature: str) -> bool:
-    from twilio.request_validator import RequestValidator
+def verify_callback(ai_call: AiCall, token: str) -> bool:
+    """Status callbacks carry the signed token from ``status_url`` (valid for the call's lifetime)."""
     try:
-        token = _creds(db, ai_call)["api_key"]
-    except PhoneAgentError:
+        return _signer.loads(token or "", max_age=6 * 3600).get("s") == ai_call.id
+    except BadSignature:
         return False
-    return bool(signature) and RequestValidator(token).validate(url, params, signature)
 
 
 _TWILIO_STATUS = {"queued": "queued", "initiated": "queued", "ringing": "queued", "in-progress": "in-progress",

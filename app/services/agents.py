@@ -29,18 +29,30 @@ from app.models import Agent
 KINDS = ("calling", "scraping", "scripting")
 
 XAI_BASE_URL = "https://api.x.ai/v1"
+TWILIO_PROVIDERS = ("twilio_grok", "twilio_gemini")
+
+
+def twilio_auth(creds: dict) -> tuple[str, str]:
+    """HTTP basic auth for Twilio's REST API: (API key SID, secret) or (account SID, auth token)."""
+    return (creds.get("key_sid") or creds["account_sid"], creds["api_key"])
 
 PROVIDERS: dict[str, dict] = {
     "twilio_grok": {
         "label": "Twilio + Grok Voice", "kinds": ["calling"], "fields": ["account_sid", "api_key", "from_number"],
-        "key_label": "Twilio Auth Token", "default_model": "grok-voice-latest",
+        "key_label": "Twilio API Key Secret (or Auth Token)", "default_model": "grok-voice-latest",
         "help": "Twilio dials the number; Grok Voice (xAI) speaks the call flow — phone audio goes straight to Grok "
                 "(μ-law 8 kHz, no conversion). The voice uses the default xAI key.",
     },
     "twilio_gemini": {
         "label": "Twilio + Gemini Live", "kinds": ["calling"], "fields": ["account_sid", "api_key", "from_number"],
-        "key_label": "Twilio Auth Token", "default_model": "gemini-3.8-live",
+        "key_label": "Twilio API Key Secret (or Auth Token)", "default_model": "gemini-3.8-live",
         "help": "Twilio dials the number; Gemini Live (this app's Google Cloud) speaks the call flow.",
+    },
+    "quo_sona": {
+        "label": "Quo Sona (your Quo number)", "kinds": ["calling"], "fields": ["from_number"], "key_label": None,
+        "default_model": "sona",
+        "help": "Quo's AI agent calls from your Quo number with Quo's voice; the call flow is condensed into its "
+                "task and you get Sona's summary. Needs 'Connect Quo' (Agents → Default keys) and Quo automation credits.",
     },
     "bland": {
         "label": "Bland AI", "kinds": ["calling"], "fields": ["api_key"], "key_label": "Bland API Key",
@@ -95,9 +107,15 @@ def default_credentials(db: Session, provider: str) -> dict:
         return {"api_key": g("xai_api_key"), "base_url": XAI_BASE_URL}
     if provider in ("twilio_gemini", "twilio_grok"):
         t = get_twilio_config(db)
-        return {"account_sid": t["account_sid"], "api_key": t["auth_token"], "from_number": t["from_number"]}
+        key_sid, key_secret = g("twilio_api_key_sid"), g("twilio_api_key_secret")
+        # An API key (SK… + secret) is preferred; the account auth token still works.
+        return {"account_sid": t["account_sid"], "key_sid": key_sid if key_secret else "",
+                "api_key": key_secret or t["auth_token"], "from_number": t["from_number"]}
     if provider == "bland":
         return {"api_key": g("bland_api_key")}
+    if provider == "quo_sona":
+        from app.services.quo_sona import quo_line_number
+        return {"from_number": quo_line_number(db)}
     if provider == "openai":
         return {"api_key": g("openai_api_key")}
     if provider == "anthropic":
@@ -114,12 +132,21 @@ def credentials(db: Session, agent: Agent) -> dict:
         creds = default_credentials(db, agent.provider)
         source = "default key"
     else:
-        creds = {"api_key": agent.api_key or "", "account_sid": agent.account_sid or "",
+        creds = {"api_key": agent.api_key or "", "account_sid": agent.account_sid or "", "key_sid": agent.key_sid or "",
                  "from_number": agent.from_number or "", "base_url": agent.base_url or ""}
+    if agent.provider in TWILIO_PROVIDERS and agent.use_default_key and agent.from_number:
+        creds["from_number"] = agent.from_number   # an agent can have its own number on the shared account
         source = "own key"
     if agent.provider == "xai":
         creds["base_url"] = XAI_BASE_URL
     missing = [f for f in PROVIDERS[agent.provider]["fields"] if not (creds.get(f) or "").strip()]
+    if agent.provider == "quo_sona":
+        from app.services.quo_sona import is_connected
+        if agent.use_default_key or not creds.get("from_number"):
+            creds["from_number"] = agent.from_number or default_credentials(db, "quo_sona")["from_number"]
+        missing = [] if creds.get("from_number") else ["Quo number"]
+        if not is_connected(db):
+            missing.append("Quo connection (Connect Quo)")
     if agent.provider == "twilio_grok":
         creds["xai_api_key"] = default_credentials(db, "xai")["api_key"]
         if not creds["xai_api_key"]:
@@ -234,24 +261,38 @@ def test(db: Session, agent: Agent) -> dict:
         data = complete_json(db, agent, "You are a connectivity check.", 'Reply with exactly {"ok": true}', max_tokens=50)
         ok = isinstance(data, dict) and data.get("ok") is True
         return {"ok": ok, "detail": f"{model_for(db, agent)} answered" if ok else f"Unexpected reply: {data!r}"[:200]}
+    if agent.provider == "quo_sona":
+        from app.services.quo_sona import QuoSonaError, call_tool
+        try:
+            call_tool(db, "get-agent-call", {"agentCallId": "AR_connection_check"})
+        except QuoSonaError as exc:
+            msg = str(exc)
+            if "Connect Quo" in msg or "rejected" in msg or "can't use" in msg:
+                raise AgentError(msg) from exc
+        return {"ok": True, "detail": f"Quo connected · Sona calls from {creds['from_number']}"}
     if agent.provider == "bland":
         from app.services.ai_agent import account_status
         s = account_status(db, key=creds["api_key"])
         return {"ok": True, "detail": f"Bland balance ${s['balance']:.2f}" if s.get("balance") is not None else "Bland key works"}
     if agent.provider in ("twilio_gemini", "twilio_grok"):
-        sid, token = creds["account_sid"], creds["api_key"]
+        sid = creds["account_sid"]
+        base = f"https://api.twilio.com/2010-04-01/Accounts/{sid}"
         try:
-            r = httpx.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/IncomingPhoneNumbers.json",
-                          params={"PhoneNumber": creds["from_number"]}, auth=(sid, token), timeout=20)
+            r = httpx.get(f"{base}/IncomingPhoneNumbers.json", params={"PhoneNumber": creds["from_number"]},
+                          auth=twilio_auth(creds), timeout=20)
+            if r.status_code < 400 and not (r.json().get("incoming_phone_numbers") or []):
+                # a number you own elsewhere (e.g. your Quo line) works once verified as a caller ID
+                r = httpx.get(f"{base}/OutgoingCallerIds.json", params={"PhoneNumber": creds["from_number"]},
+                              auth=twilio_auth(creds), timeout=20)
+                if r.status_code < 400 and not (r.json().get("outgoing_caller_ids") or []):
+                    raise AgentError(f"{creds['from_number']} isn't a number on this Twilio account or a verified "
+                                     "caller ID — buy or verify one under Agents → Phone numbers.")
         except httpx.HTTPError as exc:
             raise AgentError(f"Twilio unreachable: {exc}") from exc
         if r.status_code == 401:
-            raise AgentError("Twilio rejected the Account SID / Auth Token.")
+            raise AgentError("Twilio rejected the Account SID / API key.")
         if r.status_code >= 400:
             raise AgentError(f"Twilio error {r.status_code}: {r.text[:200]}")
-        owned = r.json().get("incoming_phone_numbers") or []
-        if not owned:
-            raise AgentError(f"{creds['from_number']} isn't a number on this Twilio account.")
         if agent.provider == "twilio_grok":
             r = httpx.get(f"{XAI_BASE_URL}/api-key", headers={"Authorization": f"Bearer {creds['xai_api_key']}"}, timeout=20)
             if r.status_code >= 400 or r.json().get("api_key_blocked") or r.json().get("api_key_disabled"):
@@ -279,7 +320,9 @@ DEFAULT_GROK_AGENTS = (
 
 
 def ensure_default_agents(db: Session) -> list[str]:
-    """With an xAI key configured, give every text kind without agents a Grok agent (default key tag).
+    """With an xAI key configured, give every kind without agents a Grok agent (default key tag):
+    Grok Scout (scraping), Grok Script Writer (scripting), and — when the Twilio default key is set —
+    Sam on Twilio + Grok Voice (calling).
 
     Never touches kinds the team already set up. Returns the names created.
     """
@@ -293,5 +336,12 @@ def ensure_default_agents(db: Session) -> list[str]:
         db.add(Agent(name=name, kind=kind, provider="xai", use_default_key=True, is_default=True, active=True,
                      instructions=instructions, max_pages=5))
         created.append(name)
+    # Phone calls default to Twilio + Grok Voice (Quo Sona / Gemini / Bland are opt-in per agent).
+    tw = default_credentials(db, "twilio_grok")
+    if tw.get("account_sid") and tw.get("api_key") and not db.execute(
+            select(func.count()).select_from(Agent).where(Agent.kind == "calling")).scalar():
+        db.add(Agent(name="Sam (Grok Voice)", kind="calling", provider="twilio_grok", use_default_key=True,
+                     is_default=True, active=True, voice="rex", max_pages=5))
+        created.append("Sam (Grok Voice)")
     db.commit()
     return created

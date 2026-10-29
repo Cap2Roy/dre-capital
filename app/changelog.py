@@ -19,9 +19,26 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.8.0"
+CURRENT_VERSION = "2.9.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.9.0",
+        "date": "2026-10-29",
+        "title": "Twilio numbers for agents, Quo Sona calls, Twilio by default",
+        "sections": {
+            "Added": [
+                "Twilio API keys: AI calling agents use a dedicated Twilio API key (SK…) — the account's main key never goes into the app. Agents can also have their own Twilio account + API key.",
+                "Phone numbers (Agents page, admins): see the account's numbers and which agent uses each, search by area code and buy a number for an agent (about $1.15/month), or verify a number you already own — like your Quo line — as the caller ID. Sellers who call an agent's number back are connected to your Quo line.",
+                "Quo calling option: a 'Quo Sona' calling agent has Quo's AI agent place the call from your Quo number. Connect once with 'Connect Quo' (sign in to Quo and approve); the call flow is condensed into Sona's task and Sona's summary is logged on the lead like any AI call (wrong numbers marked bad, stop requests honored). The connection survives deploys.",
+                "Phone calls default to Twilio + Grok Voice: with Twilio and xAI keys configured, 'Sam (Grok Voice)' is created as the default calling agent. Quo Sona, Gemini Live and Bland are opt-in per agent.",
+            ],
+            "Fixed": [
+                "Error messages across the app show the reason instead of raw JSON ({\"detail\": …}).",
+                "Default keys shows a Twilio key that's set but still needs a caller ID number, instead of 'Not set'.",
+            ],
+        },
+    },
     {
         "version": "2.8.0",
         "date": "2026-10-29",

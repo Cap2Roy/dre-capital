@@ -404,7 +404,8 @@ function syncCallAgent() {
     }
     const flowSel = document.getElementById("ai-flow");
     if (a.call_flow_id && [...flowSel.options].some(o => o.value === a.call_flow_id)) flowSel.value = a.call_flow_id;
-    voices = a.provider === "twilio_gemini" ? _geminiVoices : a.provider === "twilio_grok" ? _grokVoices : (_bland.voices || []);
+    voices = a.provider === "twilio_gemini" ? _geminiVoices : a.provider === "twilio_grok" ? _grokVoices
+      : a.provider === "quo_sona" ? [] : (_bland.voices || []);
     defVoice = a.voice || (a.provider === "bland" ? _bland.default_voice : "");
   } else {
     document.getElementById("ai-agent-badge").innerHTML = '<span class="badge badge-neutral">Bland AI</span>';
@@ -465,16 +466,17 @@ function showCall(call, startPolling) {
     </div>
     ${live_ ? `
       <div class="flex gap-2" style="flex-wrap:wrap">
-        <button class="btn btn-primary" id="ai-listen-btn" onclick="toggleListen()">${_ws ? "🔇 Stop listening" : "🔊 Listen live"}</button>
+        ${call.provider === "quo_sona" ? "" : `<button class="btn btn-primary" id="ai-listen-btn" onclick="toggleListen()">${_ws ? "🔇 Stop listening" : "🔊 Listen live"}</button>`}
         <button class="btn btn-outline" style="color:var(--danger)" onclick="hangUp()">⏹ Hang up</button>
       </div>
-      <div class="form-hint mt-2" id="ai-listen-hint">${_ws ? "Streaming the call audio…" : "Answer the call on your phone — or listen in from here."}</div>` : ""}
+      <div class="form-hint mt-2" id="ai-listen-hint">${call.provider === "quo_sona" ? "Quo's Sona is on the call — its summary appears here when it ends (usually 30–90 s)."
+        : _ws ? "Streaming the call audio…" : "Answer the call on your phone — or listen in from here."}</div>` : ""}
     ${call.error ? `<div class="gc-context mt-4">${escHtml(call.error)}</div>` : ""}
     ${call.score || call.summary ? `<div class="gc-section mt-4"><h4>Result ${scoreBadge(call.score)}</h4>
       ${call.summary ? `<div class="gc-summary">${escHtml(call.summary)}</div>` : ""}</div>` : ""}
     ${call.has_recording ? `<div class="gc-section"><h4>Recording</h4>
       <audio controls preload="none" style="width:100%" src="/api/ai-calls/${call.id}/recording"></audio></div>`
-      : (call.status === "completed" && !isLiveCall ? '<div class="form-hint mt-4">Recording processing… (about a minute)</div>' : "")}
+      : (call.status === "completed" && !isLiveCall && call.provider !== "quo_sona" ? '<div class="form-hint mt-4">Recording processing… (about a minute)</div>' : "")}
     ${call.transcript ? `<div class="gc-section"><h4>Transcript</h4><div class="gc-summary">${escHtml(call.transcript)}</div></div>` : ""}
     ${!live_ && (call.answered_by || call.price != null) ? `<div class="text-xs text-muted">${call.answered_by ? "Answered by: " + escHtml(call.answered_by) + " · " : ""}${call.price != null ? "Cost: $" + call.price.toFixed(2) : ""}</div>` : ""}`;
   if (startPolling) startPoll();
@@ -494,7 +496,8 @@ function startPoll() {
       const c = await API.get(`/api/ai-calls/${_current.id}`);
       // Twilio + Gemini calls are fully processed by the time they're final; Bland posts its recording later.
       const done = FINAL.has(c.status) && (c.status !== "completed" || (c.has_recording && c.transcript)
-        || ((c.provider === "twilio_gemini" || c.provider === "twilio_grok") && (c.has_recording || c.answered_by === "voicemail")));
+        || ((c.provider === "twilio_gemini" || c.provider === "twilio_grok") && (c.has_recording || c.answered_by === "voicemail"))
+        || (c.provider === "quo_sona" && !!c.summary));
       showCall(c, false);
       if (done || Date.now() - started > 12 * 60 * 1000) { clearInterval(_poll); _poll = null; loadHistory(); }
     } catch (e) { /* transient — keep polling */ }

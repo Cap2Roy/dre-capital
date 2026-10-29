@@ -30,7 +30,7 @@ SESSION_SECRET="dre-capital-secret-key"
 # TWILIO_* / OPENAI_API_KEY / XAI_API_KEY (Grok: scraping, scripts, Grok Voice calls) are the default keys for agents tagged "default key". Claude's
 # default key is set on the Agents page (not here, so a developer's own ANTHROPIC_API_KEY
 # in the shell never ends up in production).
-OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key GOOGLE_MAPS_API_KEY=dre-capital-maps-api-key TWILIO_ACCOUNT_SID=dre-capital-twilio-account-sid TWILIO_AUTH_TOKEN=dre-capital-twilio-auth-token TWILIO_FROM_NUMBER=dre-capital-twilio-from-number OPENAI_API_KEY=dre-capital-openai-api-key XAI_API_KEY=dre-capital-xai-api-key"
+OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key GOOGLE_MAPS_API_KEY=dre-capital-maps-api-key TWILIO_ACCOUNT_SID=dre-capital-twilio-account-sid TWILIO_AUTH_TOKEN=dre-capital-twilio-auth-token TWILIO_FROM_NUMBER=dre-capital-twilio-from-number TWILIO_API_KEY_SID=dre-capital-twilio-api-key-sid TWILIO_API_KEY_SECRET=dre-capital-twilio-api-key-secret OPENAI_API_KEY=dre-capital-openai-api-key XAI_API_KEY=dre-capital-xai-api-key"
 
 echo "=== DRE-Capital GCP Deployment ==="
 echo "Project:  $PROJECT_ID"
@@ -93,6 +93,17 @@ for pair in $OPTIONAL_SECRETS; do
   fi
 done
 
+# Quo connection for Sona calls (OAuth tokens rotate on every refresh): the app writes each new
+# token set as a secret version, and reads the latest at start — so "Connect Quo" survives deploys.
+QUO_OAUTH_SECRET="dre-capital-quo-mcp-oauth"
+if ! secret_exists "$QUO_OAUTH_SECRET"; then
+  printf '{}' | gcloud secrets create "$QUO_OAUTH_SECRET" --data-file=- --project "$PROJECT_ID" --quiet
+fi
+grant "$QUO_OAUTH_SECRET"
+gcloud secrets add-iam-policy-binding "$QUO_OAUTH_SECRET" --project "$PROJECT_ID" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/secretmanager.secretVersionManager --quiet >/dev/null
+SECRETS="${SECRETS},QUO_MCP_OAUTH=${QUO_OAUTH_SECRET}:latest"
+
 # ── 3. Build container ────────────────────────────────────────
 echo "[3/4] Building container…"
 gcloud builds submit --tag "gcr.io/${PROJECT_ID}/${SERVICE_NAME}" \
@@ -113,8 +124,7 @@ else
 fi
 # Optional values: only changed when exported.
 for v in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET RENTCAST_API_KEY LLM_API_KEY CALLING_PROVIDER AI_VOICE \
-         VERTEX_LIVE_MODEL VERTEX_LIVE_VOICE VERTEX_LOCATION \
-         TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER; do
+         VERTEX_LIVE_MODEL VERTEX_LIVE_VOICE VERTEX_LOCATION; do
   if [ -n "${!v:-}" ]; then ENV_VARS="${ENV_VARS},${v}=${!v}"; fi
 done
 

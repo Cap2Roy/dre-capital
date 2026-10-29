@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.models import Agent, AiCall, CallFlow, Lead, User
 from app.schemas import AiCallCreate, AiCallOut
-from app.services import ai_agent, phone_agent
+from app.services import ai_agent, phone_agent, quo_sona
+from app.services.agents import AgentError
 from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/ai-calls", tags=["ai-calls"])
@@ -152,9 +153,11 @@ def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depen
     try:
         if agent is not None and agent.provider in phone_agent.PROVIDERS:
             phone_agent.start_call(db, call)
+        elif agent is not None and agent.provider == "quo_sona":
+            quo_sona.start_call(db, call, flow, lead)
         else:
             ai_agent.start_call(db, call, flow, lead)
-    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError) as exc:
+    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError, quo_sona.QuoSonaError, AgentError) as exc:
         db.rollback()
         if agent is not None:
             agent.last_error = str(exc)[:500]
@@ -171,17 +174,24 @@ def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depen
 
 @router.post("/twilio/status")
 async def twilio_status(request: Request, db: Session = Depends(get_db)):
-    """Twilio call-progress + answering-machine callbacks (public; signature-verified)."""
+    """Twilio call-progress + answering-machine callbacks (public; verified by the signed token in the URL)."""
     call = db.get(AiCall, request.query_params.get("ai_call_id", ""))
     if call is None:
         raise HTTPException(404, "Unknown call")
+    if not phone_agent.verify_callback(call, request.query_params.get("t", "")):
+        raise HTTPException(403, "Invalid callback token")
     params = dict(await request.form())
-    url = phone_agent.status_url(call.id)
-    if not phone_agent.verify_twilio_signature(db, call, url, params, request.headers.get("X-Twilio-Signature", "")):
-        raise HTTPException(403, "Invalid Twilio signature")
     phone_agent.handle_status_callback(db, call, params)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/twilio/inbound")
+def twilio_inbound(db: Session = Depends(get_db)):
+    """A seller calls an agent's number back: connect them to the team's line (Quo, else the operator)."""
+    from fastapi.responses import Response
+    from app.services.twilio_numbers import inbound_twiml
+    return Response(inbound_twiml(db), media_type="text/xml")
 
 
 @router.websocket("/twilio/stream")
@@ -251,9 +261,11 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
     try:
         if call.provider == "bland":
             ai_agent.refresh(db, call)
+        elif call.provider == "quo_sona":
+            quo_sona.refresh(db, call)
         if call.phone_id and call.outcome is None:
             ai_agent.finalize_lead_call(db, call)
-    except ai_agent.AiAgentError as exc:
+    except (ai_agent.AiAgentError, quo_sona.QuoSonaError) as exc:
         call.error = str(exc)
     db.commit()
     db.refresh(call)
@@ -264,6 +276,8 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
 def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
     """WebSocket URL for live audio (PCM16 little-endian, 16 kHz, mono)."""
     call = _own_call(db, _user(request, db), call_id)
+    if call.provider == "quo_sona":
+        raise HTTPException(409, "Live listen isn't available for Quo Sona calls — the summary appears when the call ends.")
     if call.provider in phone_agent.PROVIDERS:
         if call.status not in ("queued", "in-progress"):
             raise HTTPException(409, "The call isn't live.")
@@ -280,9 +294,11 @@ def hang_up(call_id: str, request: Request, db: Session = Depends(get_db)):
     try:
         if call.provider in phone_agent.PROVIDERS:
             phone_agent.hang_up(db, call)
+        elif call.provider == "quo_sona":
+            quo_sona.stop(db, call)
         else:
             ai_agent.stop(db, call)
-    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError) as exc:
+    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError, quo_sona.QuoSonaError) as exc:
         raise HTTPException(502, str(exc))
     # Don't mark it final locally: the provider still finalizes the call
     # (duration, recording, transcript) — keep tracking its real status.

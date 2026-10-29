@@ -103,6 +103,20 @@ def _speakable(text: str) -> str:
     return _PLACEHOLDER.sub(lambda m: m.group(1), text or "")
 
 
+def script_values(db: Session, greet_name: str, lead: Optional[Lead] = None) -> dict:
+    """Placeholder values ([Lead Name], [Company Name], [Property Address], …) for a call flow."""
+    from app.services.call_guide import _placeholder_values
+    if lead is not None:
+        values = _placeholder_values(db, lead)
+    else:
+        from app.services.settings import get_setting
+        company = get_setting(db, "company_name") or "Direct Real Estate Capital LLC"
+        values = {"company name": company, "company": company,
+                  "property address": "the property you asked us about", "address": "the property you asked us about"}
+    values["lead name"] = values["owner name"] = greet_name
+    return values
+
+
 def build_agent_script(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead] = None,
                        real_call: bool = False) -> dict:
     """``{"task": prompt, "first_sentence": opening}`` for the AI agent.
@@ -113,22 +127,17 @@ def build_agent_script(db: Session, flow: CallFlow, greet_name: str, lead: Optio
     the right person about the right property.
     """
     import json
-    from app.services.call_guide import _placeholder_values, build_call_guide, fill
+    from app.services.call_guide import build_call_guide, fill
 
+    values = script_values(db, greet_name, lead)
     if lead is not None:
         guide = build_call_guide(db, lead, flow)
-        values = _placeholder_values(db, lead)
         questions = guide["questions"]
         context = guide["context"]
     else:
-        from app.services.settings import get_setting
-        company = get_setting(db, "company_name") or "Direct Real Estate Capital LLC"
-        values = {"company name": company, "company": company,
-                  "property address": "the property you asked us about", "address": "the property you asked us about"}
         questions = [{"index": i, "text": q, "known": [], "tip": None, "mode": "ask"}
                      for i, q in enumerate(json.loads(flow.questions or "[]"))]
         context = []
-    values["lead name"] = values["owner name"] = greet_name
 
     role = _speakable(fill(flow.role, values)[0])
     opening = _speakable(fill(flow.opening, values)[0])
@@ -345,8 +354,8 @@ def classify_lead_call(db: Session, transcript: str) -> dict:
             return data
     except Exception:
         pass
-    # Fallback: only look at what the other person said.
-    t = " ".join(line[5:] for line in transcript.lower().splitlines() if line.startswith("them:"))
+    # Fallback: only look at what the other person said (a summary — e.g. from Quo Sona — has no turns).
+    t = " ".join(line[5:] for line in transcript.lower().splitlines() if line.startswith("them:")) or transcript.lower()
     if re.search(r"\b(stop calling|remove (me|my number)|do not call|don't call|take me off)\b", t):
         return {"outcome": "dnc_request", "owner_confirmed": False, "summary": "Asked to stop calling."}
     if re.search(r"\b(wrong number|don't own|do not own|never owned|not the owner|no idea what|who is this)\b", t):

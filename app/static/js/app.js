@@ -1,9 +1,23 @@
 /* DRE-Capital frontend logic v2 — shared API helpers + UI utilities */
+
+/** Error for a failed request: "<status> <message>" — FastAPI's `detail` text when present
+ *  (validation errors joined), else the raw body. Callers strip the leading status code. */
+async function apiError(r) {
+  const text = await r.text();
+  let msg = text;
+  try {
+    const d = JSON.parse(text).detail;
+    if (typeof d === "string") msg = d;
+    else if (Array.isArray(d)) msg = d.map(e => (e && e.msg) || JSON.stringify(e)).join("; ");
+  } catch (_) { /* not JSON — keep the body */ }
+  return new Error(`${r.status} ${msg}`);
+}
+
 const API = {
   async get(path) {
     const r = await fetch(path);
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
   async post(path, body) {
@@ -13,7 +27,7 @@ const API = {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
   async patch(path, body) {
@@ -23,7 +37,7 @@ const API = {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
   async put(path, body) {
@@ -33,19 +47,19 @@ const API = {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
   async delete(path) {
     const r = await fetch(path, { method: "DELETE" });
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
   async upload(path, formData) {
     const r = await fetch(path, { method: "POST", body: formData });
     if (r.status === 401) { window.location.href = "/login"; return; }
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) throw await apiError(r);
     return r.json();
   },
 };

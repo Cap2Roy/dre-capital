@@ -564,7 +564,8 @@ class Agent(TimestampMixin, Base):
     provider: Mapped[str] = mapped_column(String(32))
     model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     use_default_key: Mapped[bool] = mapped_column(Boolean, default=True)
-    api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)      # Twilio: auth token
+    api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)      # Twilio: API key secret (or auth token)
+    key_sid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)       # Twilio API key SID (SK…); blank = auth token
     account_sid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)   # Twilio only
     from_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)   # Twilio only
     base_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)     # OpenAI-compatible only

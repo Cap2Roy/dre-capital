@@ -46,6 +46,20 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "TWILIO_AUTH_TOKEN",
         "description": "Your Twilio auth token (found in Twilio Console).",
     },
+    "twilio_api_key_sid": {
+        "label": "Twilio API Key SID",
+        "category": "calling",
+        "is_secret": False,
+        "env": "TWILIO_API_KEY_SID",
+        "description": "Twilio API key (SK…) used by AI calling agents instead of the account auth token.",
+    },
+    "twilio_api_key_secret": {
+        "label": "Twilio API Key Secret",
+        "category": "calling",
+        "is_secret": True,
+        "env": "TWILIO_API_KEY_SECRET",
+        "description": "Secret of the Twilio API key above.",
+    },
     "twilio_from_number": {
         "label": "Twilio From Number",
         "category": "calling",
