@@ -84,6 +84,7 @@ def run_daily_auto_scrape(db=None) -> dict:
             res = import_all_new(db)
             imported, skipped = res.get("imported", 0), res.get("skipped", 0)
         except Exception as exc:  # noqa: BLE001
+            db.rollback()   # leave the session usable for the caller
             log.exception("Government import after auto-scrape failed: %s", exc)
         log.info("Auto-scrape: ran=%d succeeded=%d failed=%d imported=%d", ran, succeeded, failed, imported)
         return {"ran": ran, "succeeded": succeeded, "failed": failed, "imported": imported, "skipped": skipped}

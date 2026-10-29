@@ -41,6 +41,7 @@ VERSIONS: list[dict] = [
             ],
             "Fixed": [
                 "Signing in works on any HTTPS deployment regardless of database type.",
+                "Importing a list that has the same property twice (e.g. on two sale dates) no longer fails partway; the repeat is counted as skipped.",
             ],
         },
     },

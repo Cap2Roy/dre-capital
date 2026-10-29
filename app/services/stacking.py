@@ -147,6 +147,9 @@ def get_or_create_lead(
 
 def add_lead_to_list(db: Session, lead: Lead, source_list: SourceList) -> bool:
     """Add a lead to a source list if not already on it. Returns True if added."""
+    # The session doesn't autoflush: make memberships added earlier in this batch (the same
+    # property listed twice in one import) visible to the check, or the insert hits uq_lead_list.
+    db.flush()
     existing = db.execute(
         select(LeadListMembership).where(
             LeadListMembership.lead_id == lead.id,
