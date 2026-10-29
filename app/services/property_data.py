@@ -101,7 +101,13 @@ def _rentcast(db: Session, path: str, params: dict) -> Any:
     if resp.status_code == 404:
         return None
     if resp.status_code in (401, 403):
-        raise PropertyDataError("RentCast rejected the API key.")
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        if body.get("error") == "billing/subscription-inactive":
+            raise PropertyDataError("RentCast subscription is inactive — reactivate it at app.rentcast.io/app/api.")
+        raise PropertyDataError(f"RentCast rejected the API key: {body.get('message') or resp.status_code}")
     if resp.status_code == 429:
         raise PropertyDataError("RentCast rate limit / plan quota reached.")
     if resp.status_code >= 400:
