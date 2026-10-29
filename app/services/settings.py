@@ -287,6 +287,13 @@ SETTING_DEFS: dict[str, dict] = {
         "description": "Sender email address for outbound email (contracts, templates).",
     },
     # ── Default keys for agents (used by agents tagged "default key") ────
+    "xai_api_key": {
+        "label": "xAI (Grok) API Key (agents default)",
+        "category": "agents",
+        "is_secret": True,
+        "env": "XAI_API_KEY",
+        "description": "Default key for Grok agents (scraping, scripting) and Grok Voice calls.",
+    },
     "openai_api_key": {
         "label": "OpenAI API Key (agents default)",
         "category": "agents",

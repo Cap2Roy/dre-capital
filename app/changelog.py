@@ -19,9 +19,28 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.7.0"
+CURRENT_VERSION = "2.8.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.8.0",
+        "date": "2026-10-29",
+        "title": "Grok (xAI) across agents and calls; complete, verified scraping",
+        "sections": {
+            "Added": [
+                "xAI Grok as an agent provider, with a default xAI key (Agents → Default keys, or XAI_API_KEY at deploy). Models were picked by benchmarking real data: Grok 4.20 (non-reasoning) for scraping — it read all 170 of 170 properties on a live sheriff-sale list with nothing invented, for about 9¢ — and Grok 4.7 for writing call scripts (best-quality drafts in about 30 s).",
+                "Grok agents are set up automatically: when an xAI key is configured and no scraping or script-writing agent exists yet, 'Grok Scout' and 'Grok Script Writer' are created as the defaults (tagged default key).",
+                "Calling engine: Twilio + Grok Voice. Phone audio goes straight to Grok (G.711 μ-law, no conversion). The caller can interrupt, the agent hangs up by itself on a wrong number, a stop request, voicemail, or when done, and you get the recording, transcript, score, and live listen. Choose it per calling agent, alongside Gemini Live and Bland.",
+                "Scraped foreclosure, tax, and sheriff-sale lists now capture the sale date, case/sheriff number, plaintiff (lender), and amount owed, and keep them on the lead when imported.",
+            ],
+            "Fixed": [
+                "Scraping agents read whole pages: long lists are read in sections in parallel instead of stopping at 40 properties (a 170-property list returned 40 before; now 170).",
+                "A scrape job's 'Imported' and 'Skipped' counts now update when you import its results.",
+                "Scraping a page with amounts like '$6,812.44' no longer fails with 'could not convert string to float'.",
+                "Sources without an agent use Grok for parsing and scoring when the xAI key is set and no other LLM is configured.",
+            ],
+        },
+    },
     {
         "version": "2.7.0",
         "date": "2026-10-29",

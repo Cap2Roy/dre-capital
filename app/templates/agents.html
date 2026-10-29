@@ -136,7 +136,7 @@ function renderAgentFields(a, kind) {
   document.getElementById("ag-key-fields").innerHTML = keys;
   let extra = "";
   if (kind === "calling") {
-    const voices = provider === "twilio_gemini" ? META.gemini_voices : [];
+    const voices = provider === "twilio_gemini" ? META.gemini_voices : provider === "twilio_grok" ? META.grok_voices : [];
     extra = `<div class="grid-2">
       <div class="form-group"><label class="form-label">Call flow (script)</label><select id="ag-flow" class="form-select">
         <option value="">Default call flow</option>${FLOWS.map(f => `<option value="${f.id}" ${f.id === a.call_flow_id ? "selected" : ""}>${escHtml(f.name)}</option>`).join("")}</select></div>
@@ -190,6 +190,7 @@ async function deleteAgent(id) {
 // ── Default keys (admin) ──
 const DEFAULT_FIELDS = {
   twilio_gemini: [["account_sid", "Twilio Account SID", "text"], ["api_key", "Twilio Auth Token", "password"], ["from_number", "Twilio phone number", "text"]],
+  xai: [["api_key", "xAI API Key", "password"]],
   bland: [["api_key", "Bland API Key", "password"]],
   openai: [["api_key", "OpenAI API Key", "password"]],
   anthropic: [["api_key", "Anthropic API Key", "password"]],

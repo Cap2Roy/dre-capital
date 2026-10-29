@@ -114,7 +114,7 @@ const STATUS_BADGES = {
 const SCORE_BADGES = { hot: ["badge-danger", "🔥 Hot"], warm: ["badge-warning", "Warm"], cold: ["badge-info", "Cold"] };
 let _current = null, _poll = null, _timer = null, _startedAt = null;
 let _audioCtx = null, _ws = null, _gain = null;
-let _callAgents = [], _bland = null, _geminiVoices = [];
+let _callAgents = [], _bland = null, _geminiVoices = [], _grokVoices = [];
 
 function aiStatusBadge(s) {
   const [cls, label] = STATUS_BADGES[s] || ["badge-neutral", escHtml(s)];
@@ -150,6 +150,7 @@ async function init() {
   ]);
   _callAgents = agents.filter(a => a.active);
   _geminiVoices = meta.gemini_voices || [];
+  _grokVoices = meta.grok_voices || [];
   const def = _callAgents.find(a => a.is_default);
   document.getElementById("ai-agent").innerHTML =
     (def ? "" : '<option value="">Bland AI (key in Settings)</option>') +
@@ -403,7 +404,7 @@ function syncCallAgent() {
     }
     const flowSel = document.getElementById("ai-flow");
     if (a.call_flow_id && [...flowSel.options].some(o => o.value === a.call_flow_id)) flowSel.value = a.call_flow_id;
-    voices = a.provider === "twilio_gemini" ? _geminiVoices : (_bland.voices || []);
+    voices = a.provider === "twilio_gemini" ? _geminiVoices : a.provider === "twilio_grok" ? _grokVoices : (_bland.voices || []);
     defVoice = a.voice || (a.provider === "bland" ? _bland.default_voice : "");
   } else {
     document.getElementById("ai-agent-badge").innerHTML = '<span class="badge badge-neutral">Bland AI</span>';
@@ -493,7 +494,7 @@ function startPoll() {
       const c = await API.get(`/api/ai-calls/${_current.id}`);
       // Twilio + Gemini calls are fully processed by the time they're final; Bland posts its recording later.
       const done = FINAL.has(c.status) && (c.status !== "completed" || (c.has_recording && c.transcript)
-        || (c.provider === "twilio_gemini" && (c.has_recording || c.answered_by === "voicemail")));
+        || ((c.provider === "twilio_gemini" || c.provider === "twilio_grok") && (c.has_recording || c.answered_by === "voicemail")));
       showCall(c, false);
       if (done || Date.now() - started > 12 * 60 * 1000) { clearInterval(_poll); _poll = null; loadHistory(); }
     } catch (e) { /* transient — keep polling */ }

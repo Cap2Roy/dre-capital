@@ -277,7 +277,11 @@ Keep it concise and actionable."""
 
 
 def get_llm_config() -> dict[str, str]:
-    """Get LLM API configuration from env vars."""
+    """LLM for sources without a scraping agent: LLM_* env vars, else Grok when XAI_API_KEY is set."""
+    if not os.environ.get("LLM_API_KEY") and os.environ.get("XAI_API_KEY"):
+        from app.services.agents import PROVIDERS, XAI_BASE_URL
+        return {"api_key": os.environ["XAI_API_KEY"], "base_url": XAI_BASE_URL,
+                "model": os.environ.get("LLM_MODEL") or PROVIDERS["xai"]["models"]["scraping"]}
     return {
         "api_key": os.environ.get("LLM_API_KEY", ""),
         "base_url": os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"),
@@ -366,19 +370,30 @@ def llm_parse_raw_data(raw_text: str) -> list[dict[str, Any]]:
     return []
 
 
+def _num(v: Any) -> float:
+    """Scraped numbers arrive as 6812.44, "6,812.44", "$6,812.44" or "n/a" — parse the first number, else 0."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    m = re.search(r"-?\d[\d,]*(?:\.\d+)?", str(v or "").replace("$", ""))
+    try:
+        return float(m.group(0).replace(",", "")) if m else 0.0
+    except ValueError:
+        return 0.0
+
+
 def llm_analyze_property(property_data: dict[str, Any]) -> str:
     """Use the LLM to analyze a single property for motivated-seller signals."""
     # Heuristic analysis as baseline (always works, even without LLM)
     signals: list[str] = []
     score = 30
 
-    taxes_owed = property_data.get("taxes_owed")
-    assessed_value = property_data.get("assessed_value")
+    taxes_owed = _num(property_data.get("taxes_owed"))
+    assessed_value = _num(property_data.get("assessed_value"))
     owner_name = (property_data.get("owner_name") or "").strip()
     mailing = (property_data.get("mailing_address") or "").strip()
     prop_addr = (property_data.get("property_address") or "").strip()
 
-    if taxes_owed and float(taxes_owed or 0) > 0:
+    if taxes_owed > 0:
         signals.append("tax delinquency")
         score += 25
 
@@ -390,13 +405,13 @@ def llm_analyze_property(property_data: dict[str, Any]) -> str:
         signals.append("corporate/LLC ownership")
         score += 10
 
-    year_built = property_data.get("year_built")
-    if year_built and int(float(year_built)) < 1980:
+    year_built = _num(property_data.get("year_built"))
+    if 1700 < year_built < 1980:
         signals.append("older property (likely needs repairs)")
         score += 5
 
-    last_sale = property_data.get("last_sale_price")
-    if last_sale and assessed_value and float(last_sale) < float(assessed_value) * 0.7:
+    last_sale = _num(property_data.get("last_sale_price"))
+    if last_sale and assessed_value and last_sale < assessed_value * 0.7:
         signals.append("possible low equity / distress")
         score += 15
 
@@ -437,7 +452,7 @@ def llm_summarize_scrape(results: list[dict[str, Any]]) -> str:
                    and (r.get("mailing_address", "") or "").strip().lower() != (r.get("property_address", "") or "").strip().lower())
     llc_owners = sum(1 for r in results if any(kw in (r.get("owner_name") or "").upper()
                   for kw in ("LLC", "INC", "CORP")))
-    tax_delinquent = sum(1 for r in results if float(r.get("taxes_owed") or 0) > 0)
+    tax_delinquent = sum(1 for r in results if _num(r.get("taxes_owed")) > 0)
 
     parts = [f"Found {len(results)} properties."]
     if absentee:
@@ -950,6 +965,7 @@ def import_scrape_results(
     added = 0
     skipped = 0
     affected_lead_ids: set[str] = set()
+    per_job: dict[str, list[int]] = {}
 
     for result in results:
         try:
@@ -1021,16 +1037,36 @@ def import_scrape_results(
             rec.source = "rentcast"
             rec.fetched_at = utcnow()
 
+        # Sale details from foreclosure / tax / sheriff-sale lists (agent scrapes) go on the lead.
+        sale_bits = [b for b in (
+            f"Sale date {data['sale_date']}" if data.get("sale_date") else None,
+            f"Case {data['case_number']}" if data.get("case_number") else None,
+            f"Plaintiff/lender {data['lender']}" if data.get("lender") else None,
+            f"Amount owed ${_to_float(data['amount_owed']):,.2f}" if _to_float(data.get("amount_owed")) else None,
+        ) if b]
+        if sale_bits:
+            line = "Scraped sale info: " + "; ".join(sale_bits) + (f" (source: {data['source_url']})" if data.get("source_url") else "")
+            if line not in (lead.notes or ""):
+                lead.notes = f"{lead.notes}\n{line}" if lead.notes else line
+
+        job_counts = per_job.setdefault(result.job_id, [0, 0])
         if add_lead_to_list(db, lead, source_list):
             added += 1
+            job_counts[0] += 1
         else:
             skipped += 1
+            job_counts[1] += 1
 
         result.imported = True
         result.imported_lead_id = lead.id
         affected_lead_ids.add(lead.id)
 
     source_list.record_count = added
+    for job_id, (n_added, n_skipped) in per_job.items():
+        job = db.get(ScrapeJob, job_id)
+        if job is not None:
+            job.imported = (job.imported or 0) + n_added
+            job.skipped = (job.skipped or 0) + n_skipped
     recompute_stack_depths(db, affected_lead_ids)
     db.commit()
 

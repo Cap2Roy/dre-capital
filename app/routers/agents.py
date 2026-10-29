@@ -100,8 +100,11 @@ def _apply(db: Session, a: Agent, data: dict) -> None:
         raise HTTPException(404, "Call flow not found")
     if a.kind == "calling" and a.voice:
         from app.services.live_agent import VOICES
+        from app.services.phone_agent import GROK_VOICES
         if a.provider == "twilio_gemini" and a.voice not in VOICES:
             raise HTTPException(400, f"Unknown Gemini voice '{a.voice}'.")
+        if a.provider == "twilio_grok" and a.voice not in GROK_VOICES:
+            raise HTTPException(400, f"Unknown Grok voice '{a.voice}'.")
     a.max_pages = max(1, min(int(a.max_pages or 5), 25))
     if a.is_default:
         for other in db.execute(select(Agent).where(Agent.kind == a.kind, Agent.id != a.id)).scalars():
@@ -111,7 +114,8 @@ def _apply(db: Session, a: Agent, data: dict) -> None:
 @router.get("/providers")
 def providers():
     from app.services.live_agent import VOICES
-    return {"kinds": list(svc.KINDS), "providers": svc.PROVIDERS, "gemini_voices": VOICES}
+    from app.services.phone_agent import GROK_VOICES
+    return {"kinds": list(svc.KINDS), "providers": svc.PROVIDERS, "gemini_voices": VOICES, "grok_voices": GROK_VOICES}
 
 
 @router.get("")
@@ -146,9 +150,12 @@ def get_defaults(request: Request, db: Session = Depends(get_db)):
     _user(request, db)
     res = {}
     for p in svc.PROVIDERS:
+        if p == "twilio_grok":   # same Twilio account as twilio_gemini (its voice uses the xAI key)
+            continue
         creds = svc.default_credentials(db, p)
         need = svc.PROVIDERS[p]["fields"]
-        res[p] = {"label": svc.PROVIDERS[p]["label"], "set": all((creds.get(f) or "").strip() for f in need),
+        label = "Twilio (all phone-calling agents)" if p == "twilio_gemini" else svc.PROVIDERS[p]["label"]
+        res[p] = {"label": label, "set": all((creds.get(f) or "").strip() for f in need),
                   "fields": need, "from_number": creds.get("from_number") or "", "base_url": creds.get("base_url") or ""}
     return res
 
@@ -162,7 +169,7 @@ def set_defaults(payload: dict, request: Request, db: Session = Depends(get_db))
         raise HTTPException(403, "Admin only")
     mapping = {
         ("openai", "api_key"): "openai_api_key", ("anthropic", "api_key"): "anthropic_api_key",
-        ("bland", "api_key"): "bland_api_key",
+        ("bland", "api_key"): "bland_api_key", ("xai", "api_key"): "xai_api_key",
         ("openai_compatible", "api_key"): "llm_api_key", ("openai_compatible", "base_url"): "llm_base_url",
         ("twilio_gemini", "account_sid"): "twilio_account_sid", ("twilio_gemini", "api_key"): "twilio_auth_token",
         ("twilio_gemini", "from_number"): "twilio_from_number",

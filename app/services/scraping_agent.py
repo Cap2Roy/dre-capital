@@ -42,12 +42,14 @@ ROBOTS_TIMEOUT = 10.0
 MAX_PAGE_BYTES = 2_000_000
 MAX_ROBOTS_BYTES = 500_000
 MAX_REDIRECTS = 5
-MAX_TEXT_CHARS = 40_000
+MAX_TEXT_CHARS = 240_000   # page text kept for extraction (read in chunks)
+CHUNK_CHARS = 12_000        # one LLM call per chunk — keeps every row within the output budget
+CHUNK_WORKERS = 4
+SCORE_PAYLOAD_CHARS = 40_000
 MAX_LINKS = 80
 POLITENESS_DELAY = 1.0
 MAX_CRAWL_DELAY = 10.0
-MAX_RECORDS = 200
-MAX_RECORDS_PER_PAGE = 40
+MAX_RECORDS = 1000
 SCORE_BATCH = 25
 LLM_MAX_TOKENS = 16_000
 
@@ -60,9 +62,10 @@ _HEADERS = {
 TEXT_FIELDS = (
     "property_address", "property_city", "property_state", "property_zip", "owner_name",
     "mailing_address", "mailing_city", "mailing_state", "mailing_zip", "last_sale_date",
+    "sale_date", "case_number", "lender",
 )
 INT_FIELDS = ("beds", "sqft", "year_built")
-FLOAT_FIELDS = ("baths", "assessed_value", "taxes_owed", "last_sale_price")
+FLOAT_FIELDS = ("baths", "assessed_value", "taxes_owed", "last_sale_price", "amount_owed")
 
 _ENTITY_RE = re.compile(r"\b(LLC|L\.L\.C|INC|CORP|CORPORATION|CO\.|COMPANY|LP|LLP|LTD|TRUST|PARTNERSHIP|HOLDINGS)\b", re.I)
 _SKIP_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico", ".css", ".js", ".zip", ".pdf",
@@ -490,6 +493,7 @@ _RECORD_SHAPE = (
     '"mailing_zip": str|null, "beds": number|null, "baths": number|null, "sqft": number|null, '
     '"year_built": number|null, "assessed_value": number|null, "taxes_owed": number|null, '
     '"last_sale_price": number|null, "last_sale_date": str|null, "owner_is_llc": bool|null, '
+    '"sale_date": str|null, "case_number": str|null, "lender": str|null, "amount_owed": number|null, '
     '"signals": [str], "score": int, "why": str}'
 )
 
@@ -501,12 +505,15 @@ Rules:
   addresses, owners, values, dates or any other field. Omit any field that is not on the page (no nulls needed).
 - Every record needs a property_address (street number + street name) that appears on the page; skip rows without one.
 - Numbers are plain numbers (no $ or commas). Dates as YYYY-MM-DD when the page gives a full date, else as written.
+- Foreclosure / tax / sheriff sale lists: owner_name is the property owner (the first individual defendant —
+  not banks, MERS, "State of New Jersey" or other lien holders); lender is the plaintiff; sale_date is the scheduled
+  auction date; case_number is the sheriff/docket/case number; amount_owed is the judgment, upset or tax amount due.
 - owner_is_llc: true when the owner shown is an LLC, Inc, Corp, trust, partnership or other entity; null if no owner is shown.
 - signals: short motivated-seller signals the page supports (e.g. "tax delinquent", "tax sale", "sheriff sale",
   "foreclosure", "absentee owner", "vacant", "code violation", "probate", "entity owner", "pre-1980 build").
 - score: 0-100 — how likely the owner is a motivated seller and how well the property fits the goal.
   why: one short sentence citing the page facts behind the score.
-- Return at most {MAX_RECORDS_PER_PAGE} records per page (the best matches for the goal if there are more).
+- Return EVERY matching record in the content you are given — do not stop early or sample.
 - next_url: the URL of the next page worth reading for this goal (usually the listing's "next page" or a detail/list
   page linked from this one), taken from the links provided; null when there is none or more pages wouldn't help.
 - summary: one sentence describing what this page contains.
@@ -537,11 +544,28 @@ def _system(base: str, agent: Agent, goal: Optional[str]) -> str:
     return "\n\n".join(parts)
 
 
-def _page_prompt(pt: PageText, url: str, page_no: int, max_pages: int) -> str:
+def _page_prompt(pt: PageText, url: str, page_no: int, max_pages: int, *, chunk: str,
+                 part: int = 1, parts: int = 1) -> str:
     links = "\n".join(f"- {text} → {href}" for text, href in pt.links) or "(none)"
+    section = f" — section {part} of {parts} (other sections are read separately; extract only this one)" if parts > 1 else ""
+    nav = (f"Same-site links on this page (anchor text → URL):\n{links}\n\n" if part == 1
+           else "next_url: return null for this section.\n\n")
     return (f"Page URL: {url}\nPage title: {pt.title or '(none)'}\nThis is page {page_no} of at most {max_pages}.\n\n"
-            f"Same-site links on this page (anchor text → URL):\n{links}\n\n"
-            f"Page content{' (truncated)' if pt.truncated else ''}:\n<<<PAGE\n{pt.text}\nPAGE>>>")
+            f"{nav}Page content{' (truncated)' if pt.truncated else ''}{section}:\n<<<PAGE\n{chunk}\nPAGE>>>")
+
+
+def split_chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:
+    """Split page text on line boundaries into pieces of at most ~``size`` characters."""
+    if len(text) <= size:
+        return [text]
+    chunks, cur, n = [], [], 0
+    for line in text.splitlines():
+        if cur and n + len(line) + 1 > size:
+            chunks.append("\n".join(cur)); cur, n = [], 0
+        cur.append(line[:size]); n += len(line[:size]) + 1
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
 
 
 @dataclass
@@ -577,11 +601,8 @@ def _salvage(text: str) -> Optional[dict]:
     return data
 
 
-def extract_page(db: Session, agent: Agent, pt: PageText, url: str, goal: Optional[str],
-                 page_no: int = 1, max_pages: int = 1) -> PageResult:
-    """One LLM call: records + next page for a fetched page. Raises AgentError."""
-    text = complete(db, agent, _system(EXTRACT_PROMPT, agent, goal), _page_prompt(pt, url, page_no, max_pages),
-                    json_mode=True, max_tokens=LLM_MAX_TOKENS)
+def _extract_chunk(db: Session, agent: Agent, system: str, prompt: str) -> dict:
+    text = complete(db, agent, system, prompt, json_mode=True, max_tokens=LLM_MAX_TOKENS)
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -592,12 +613,46 @@ def extract_page(db: Session, agent: Agent, pt: PageText, url: str, goal: Option
         data = {"records": data}
     if not isinstance(data, dict):
         raise AgentError(f"{agent.name} returned an unexpected response shape.")
-    records = data.get("records") if isinstance(data.get("records"), list) else []
-    leads = [lead for lead in (clean_record(r, page_url=url) for r in records) if lead]
-    next_url = data.get("next_url") if isinstance(data.get("next_url"), str) else None
-    summary = _text(data.get("summary")) or ""
-    if data.get("_cut_off"):
-        summary = (summary + f" (Response was cut off; kept the {len(leads)} complete record(s).)").strip()
+    return data
+
+
+def extract_page(db: Session, agent: Agent, pt: PageText, url: str, goal: Optional[str],
+                 page_no: int = 1, max_pages: int = 1) -> PageResult:
+    """Records + next page for a fetched page. Long pages are read in chunks (in parallel,
+    each on its own DB session) so no rows are lost to the model's output limit. Raises AgentError."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app.database import SessionLocal
+
+    system = _system(EXTRACT_PROMPT, agent, goal)
+    chunks = split_chunks(pt.text)
+    prompts = [_page_prompt(pt, url, page_no, max_pages, chunk=c, part=i + 1, parts=len(chunks))
+               for i, c in enumerate(chunks)]
+    if len(prompts) == 1:
+        results = [_extract_chunk(db, agent, system, prompts[0])]
+    else:
+        agent_id = agent.id
+
+        def run(prompt: str) -> dict:
+            own = SessionLocal()
+            try:
+                return _extract_chunk(own, own.get(Agent, agent_id), system, prompt)
+            finally:
+                own.close()
+        with ThreadPoolExecutor(max_workers=CHUNK_WORKERS) as pool:
+            results = list(pool.map(run, prompts))   # re-raises the first chunk error
+    leads: list[AgentLead] = []
+    cut_off = 0
+    for data in results:
+        records = data.get("records") if isinstance(data.get("records"), list) else []
+        leads.extend(lead for lead in (clean_record(r, page_url=url) for r in records) if lead)
+        cut_off += bool(data.get("_cut_off"))
+    first = results[0]
+    next_url = first.get("next_url") if isinstance(first.get("next_url"), str) else None
+    summary = _text(first.get("summary")) or ""
+    if len(chunks) > 1:
+        summary = (summary + f" (Read in {len(chunks)} sections.)").strip()
+    if cut_off:
+        summary = (summary + f" ({cut_off} section response(s) were cut off; kept their complete records.)").strip()
     return PageResult(leads=leads, next_url=next_url, summary=summary)
 
 
@@ -608,7 +663,7 @@ def score_records(db: Session, agent: Agent, records: list[dict[str, Any]], goal
         batch = records[start:start + SCORE_BATCH]
         payload = json.dumps([{"index": i, **{k: v for k, v in r.items() if not k.startswith("_")}}
                               for i, r in enumerate(batch)], default=str)
-        data = complete_json(db, agent, _system(SCORE_PROMPT, agent, goal), payload[:MAX_TEXT_CHARS],
+        data = complete_json(db, agent, _system(SCORE_PROMPT, agent, goal), payload[:SCORE_PAYLOAD_CHARS],
                              max_tokens=LLM_MAX_TOKENS)
         scores = data.get("scores") if isinstance(data, dict) else data
         by_index = {}

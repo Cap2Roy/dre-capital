@@ -2,13 +2,15 @@
 an LLM client shared by scraping / scripting agents, and connection tests.
 
 Kinds and providers
-- calling:   twilio_gemini (Twilio dials, Gemini Live speaks)  |  bland (Bland AI)
-- scraping:  gemini | openai | anthropic | openai_compatible
-- scripting: gemini | openai | anthropic | openai_compatible
+- calling:   twilio_grok (Twilio dials, Grok Voice speaks) | twilio_gemini (Gemini Live) | bland (Bland AI)
+- scraping:  xai | gemini | openai | anthropic | openai_compatible
+- scripting: xai | gemini | openai | anthropic | openai_compatible
 
 Default keys (the "default key" tag, ``use_default_key=True``)
 - twilio_gemini → Settings Twilio account (SID, auth token, from number); Gemini
   runs on this app's Google Cloud service account
+- twilio_grok → the same Twilio account; the voice runs on ``xai_api_key``
+- xai → ``xai_api_key`` (xAI Grok, api.x.ai)
 - bland → ``bland_api_key``          - gemini → the app's Google Cloud (no key)
 - openai → ``openai_api_key``        - anthropic → ``anthropic_api_key``
 - openai_compatible → ``llm_api_key`` + ``llm_base_url`` (+ ``llm_model``)
@@ -26,7 +28,15 @@ from app.models import Agent
 
 KINDS = ("calling", "scraping", "scripting")
 
+XAI_BASE_URL = "https://api.x.ai/v1"
+
 PROVIDERS: dict[str, dict] = {
+    "twilio_grok": {
+        "label": "Twilio + Grok Voice", "kinds": ["calling"], "fields": ["account_sid", "api_key", "from_number"],
+        "key_label": "Twilio Auth Token", "default_model": "grok-voice-latest",
+        "help": "Twilio dials the number; Grok Voice (xAI) speaks the call flow — phone audio goes straight to Grok "
+                "(μ-law 8 kHz, no conversion). The voice uses the default xAI key.",
+    },
     "twilio_gemini": {
         "label": "Twilio + Gemini Live", "kinds": ["calling"], "fields": ["account_sid", "api_key", "from_number"],
         "key_label": "Twilio Auth Token", "default_model": "gemini-3.8-live",
@@ -35,6 +45,12 @@ PROVIDERS: dict[str, dict] = {
     "bland": {
         "label": "Bland AI", "kinds": ["calling"], "fields": ["api_key"], "key_label": "Bland API Key",
         "default_model": None, "help": "Bland places the call and runs the agent.",
+    },
+    "xai": {
+        "label": "xAI Grok", "kinds": ["scraping", "scripting"], "fields": ["api_key"], "key_label": "xAI API Key",
+        "default_model": "grok-4.20-non-reasoning",
+        "models": {"scraping": "grok-4.20-non-reasoning", "scripting": "grok-4.7"},
+        "help": "console.x.ai — fast non-reasoning Grok for scraping, Grok 4.7 for writing scripts.",
     },
     "gemini": {
         "label": "Google Gemini (Vertex AI)", "kinds": ["scraping", "scripting"], "fields": [],
@@ -75,7 +91,9 @@ def validate(kind: str, provider: str) -> None:
 def default_credentials(db: Session, provider: str) -> dict:
     from app.services.settings import get_setting, get_twilio_config
     g = lambda k: (get_setting(db, k) or "").strip()  # noqa: E731
-    if provider == "twilio_gemini":
+    if provider == "xai":
+        return {"api_key": g("xai_api_key"), "base_url": XAI_BASE_URL}
+    if provider in ("twilio_gemini", "twilio_grok"):
         t = get_twilio_config(db)
         return {"account_sid": t["account_sid"], "api_key": t["auth_token"], "from_number": t["from_number"]}
     if provider == "bland":
@@ -99,7 +117,13 @@ def credentials(db: Session, agent: Agent) -> dict:
         creds = {"api_key": agent.api_key or "", "account_sid": agent.account_sid or "",
                  "from_number": agent.from_number or "", "base_url": agent.base_url or ""}
         source = "own key"
+    if agent.provider == "xai":
+        creds["base_url"] = XAI_BASE_URL
     missing = [f for f in PROVIDERS[agent.provider]["fields"] if not (creds.get(f) or "").strip()]
+    if agent.provider == "twilio_grok":
+        creds["xai_api_key"] = default_credentials(db, "xai")["api_key"]
+        if not creds["xai_api_key"]:
+            missing.append("xAI API key (default key)")
     if missing:
         where = ("the provider's default key isn't set — add it under Agents → Default keys"
                  if agent.use_default_key else "add it to the agent, or tag it 'default key'")
@@ -114,7 +138,7 @@ def model_for(db: Session, agent: Agent) -> str:
         m = default_credentials(db, "openai_compatible").get("model")
         if m:
             return m
-    m = PROVIDERS[agent.provider]["default_model"]
+    m = PROVIDERS[agent.provider].get("models", {}).get(agent.kind) or PROVIDERS[agent.provider]["default_model"]
     if not m:
         raise AgentError(f"{agent.name}: set a model name.")
     return m
@@ -167,7 +191,7 @@ def complete(db: Session, agent: Agent, system: str, user: str, *, json_mode: bo
             if resp.status_code >= 400:
                 raise AgentError(f"Claude error {resp.status_code}: {resp.text[:300]}")
             text = "".join(b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text")
-        else:  # openai / openai_compatible
+        else:  # openai / openai_compatible / xai (OpenAI-compatible)
             base = (creds.get("base_url") or "https://api.openai.com/v1").rstrip("/")
             body: dict[str, Any] = {"model": model, "temperature": 0.2, "max_tokens": max_tokens,
                                     "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
@@ -214,7 +238,7 @@ def test(db: Session, agent: Agent) -> dict:
         from app.services.ai_agent import account_status
         s = account_status(db, key=creds["api_key"])
         return {"ok": True, "detail": f"Bland balance ${s['balance']:.2f}" if s.get("balance") is not None else "Bland key works"}
-    if agent.provider == "twilio_gemini":
+    if agent.provider in ("twilio_gemini", "twilio_grok"):
         sid, token = creds["account_sid"], creds["api_key"]
         try:
             r = httpx.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/IncomingPhoneNumbers.json",
@@ -228,6 +252,11 @@ def test(db: Session, agent: Agent) -> dict:
         owned = r.json().get("incoming_phone_numbers") or []
         if not owned:
             raise AgentError(f"{creds['from_number']} isn't a number on this Twilio account.")
+        if agent.provider == "twilio_grok":
+            r = httpx.get(f"{XAI_BASE_URL}/api-key", headers={"Authorization": f"Bearer {creds['xai_api_key']}"}, timeout=20)
+            if r.status_code >= 400 or r.json().get("api_key_blocked") or r.json().get("api_key_disabled"):
+                raise AgentError(f"Twilio OK, but the xAI key was rejected ({r.status_code}).")
+            return {"ok": True, "detail": f"Twilio number {creds['from_number']} ready · Grok Voice key OK"}
         from app.services.live_agent import status as gemini_status
         g = gemini_status(db)
         if not g["configured"]:
@@ -240,3 +269,29 @@ def default_agent(db: Session, kind: str) -> Optional[Agent]:
     from sqlalchemy import select
     return db.execute(select(Agent).where(Agent.kind == kind, Agent.active == True)  # noqa: E712
                       .order_by(Agent.is_default.desc(), Agent.created_at).limit(1)).scalars().first()
+
+
+DEFAULT_GROK_AGENTS = (
+    ("scraping", "Grok Scout", "Read county sale lists, sheriff/tax sales and listings. Capture the owner (first individual "
+     "defendant on foreclosure lists), sale date, case number and any amount owed."),
+    ("scripting", "Grok Script Writer", "Warm, plain-English scripts; short questions; never discuss price on the first call."),
+)
+
+
+def ensure_default_agents(db: Session) -> list[str]:
+    """With an xAI key configured, give every text kind without agents a Grok agent (default key tag).
+
+    Never touches kinds the team already set up. Returns the names created.
+    """
+    from sqlalchemy import func, select
+    if not default_credentials(db, "xai").get("api_key"):
+        return []
+    created = []
+    for kind, name, instructions in DEFAULT_GROK_AGENTS:
+        if db.execute(select(func.count()).select_from(Agent).where(Agent.kind == kind)).scalar():
+            continue
+        db.add(Agent(name=name, kind=kind, provider="xai", use_default_key=True, is_default=True, active=True,
+                     instructions=instructions, max_pages=5))
+        created.append(name)
+    db.commit()
+    return created

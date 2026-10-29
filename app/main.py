@@ -48,6 +48,23 @@ def _register_quo_webhooks_on_startup() -> None:
         db.close()
 
 
+def _ensure_default_agents() -> None:
+    """Grok agents for scraping / scripting when an xAI key is configured (the DB is recreated on each deploy)."""
+    import logging
+    from app.database import SessionLocal
+    from app.services.agents import ensure_default_agents
+    db = SessionLocal()
+    try:
+        created = ensure_default_agents(db)
+        if created:
+            logging.getLogger("uvicorn.error").info("Default agents created: %s", ", ".join(created))
+    except Exception as exc:
+        db.rollback()
+        logging.getLogger("uvicorn.error").warning("Default agents not created: %s", exc)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -60,6 +77,7 @@ async def lifespan(app: FastAPI):
     except asyncio.TimeoutError:
         import logging
         logging.getLogger("uvicorn.error").warning("Quo webhook registration timed out; continuing startup")
+    _ensure_default_agents()
     scheduler_task = asyncio.create_task(scheduler_loop())
     yield
     scheduler_task.cancel()

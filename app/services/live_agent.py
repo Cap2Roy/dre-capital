@@ -90,15 +90,18 @@ def status(db: Session) -> dict:
 
 # ── Session config ──────────────────────────────────────────────────────────
 
-def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead], voice: str, *,
-                   real_call: bool = False, phone: bool = False, extra_instructions: Optional[str] = None):
-    """(LiveConnectConfig, kickoff_text) for a call-flow agent.
+END_CALL_REASONS = ["completed", "wrong_number", "stop_request", "voicemail", "not_interested", "hostile", "other"]
 
-    ``phone`` adds the ``end_call`` tool so the agent can hang up itself (wrong
-    number, stop request, voicemail, call finished). ``real_call`` makes it verify
-    it reached the owner before anything else.
+
+def agent_instructions(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead], *,
+                       real_call: bool = False, phone: bool = False,
+                       extra_instructions: Optional[str] = None) -> tuple[str, str]:
+    """(system instructions, kickoff text) for a call-flow voice agent — shared by every voice engine.
+
+    ``phone`` tells the agent about the ``end_call`` tool so it can hang up itself (wrong
+    number, stop request, voicemail, call finished). ``real_call`` makes it verify it
+    reached the owner before anything else.
     """
-    from google.genai import types
     from app.services.ai_agent import build_agent_script
 
     script = build_agent_script(db, flow, greet_name, lead, real_call=real_call)
@@ -110,18 +113,29 @@ def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[
     )
     if extra_instructions:
         instruction += "\n\nADDITIONAL INSTRUCTIONS FROM YOUR TEAM:\n" + extra_instructions.strip()
-    tools = None
     if phone:
         instruction += (
             "\n\nYou can hang up with the end_call tool. Say a brief polite goodbye first, then call end_call. "
             "Use it when: the call is complete; it's a wrong number or not the owner; they ask you to stop or remove "
             "them; you reached voicemail or an answering machine (do not leave a message); or they're hostile.")
+    kickoff = f"(The call has connected and {greet_name} picked up. Say your opening line now.)"
+    return instruction, kickoff
+
+
+def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead], voice: str, *,
+                   real_call: bool = False, phone: bool = False, extra_instructions: Optional[str] = None):
+    """(LiveConnectConfig, kickoff_text) for a Gemini Live call-flow agent."""
+    from google.genai import types
+
+    instruction, kickoff = agent_instructions(db, flow, greet_name, lead, real_call=real_call, phone=phone,
+                                              extra_instructions=extra_instructions)
+    tools = None
+    if phone:
         tools = [types.Tool(function_declarations=[types.FunctionDeclaration(
             name="end_call",
             description="Hang up the phone call after saying goodbye.",
-            parameters={"type": "OBJECT", "properties": {"reason": {"type": "STRING", "enum": [
-                "completed", "wrong_number", "stop_request", "voicemail", "not_interested", "hostile", "other"]}},
-                "required": ["reason"]},
+            parameters={"type": "OBJECT", "properties": {"reason": {"type": "STRING", "enum": END_CALL_REASONS}},
+                        "required": ["reason"]},
         )])]
     cfg = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
@@ -134,7 +148,6 @@ def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[
         output_audio_transcription=types.AudioTranscriptionConfig(),
         tools=tools,
     )
-    kickoff = f"(The call has connected and {greet_name} picked up. Say your opening line now.)"
     return cfg, kickoff
 
 

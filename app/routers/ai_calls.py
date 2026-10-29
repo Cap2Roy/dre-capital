@@ -150,7 +150,7 @@ def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depen
     db.add(call)
     db.flush()
     try:
-        if agent is not None and agent.provider == "twilio_gemini":
+        if agent is not None and agent.provider in phone_agent.PROVIDERS:
             phone_agent.start_call(db, call)
         else:
             ai_agent.start_call(db, call, flow, lead)
@@ -264,7 +264,7 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
 def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
     """WebSocket URL for live audio (PCM16 little-endian, 16 kHz, mono)."""
     call = _own_call(db, _user(request, db), call_id)
-    if call.provider == "twilio_gemini":
+    if call.provider in phone_agent.PROVIDERS:
         if call.status not in ("queued", "in-progress"):
             raise HTTPException(409, "The call isn't live.")
         return {"url": f"/api/ai-calls/{call.id}/listen-ws", "sample_rate": 16000, "format": "dre_tracks"}
@@ -278,7 +278,7 @@ def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
 def hang_up(call_id: str, request: Request, db: Session = Depends(get_db)):
     call = _own_call(db, _user(request, db), call_id)
     try:
-        if call.provider == "twilio_gemini":
+        if call.provider in phone_agent.PROVIDERS:
             phone_agent.hang_up(db, call)
         else:
             ai_agent.stop(db, call)
