@@ -19,6 +19,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
 | **Rehearse with AI** | **Talk to Sam live** (Google **Gemini Live on Vertex AI**): a real-time voice agent runs your call flow in the browser — you play the seller over your mic, interrupt freely, watch the live transcript, then get the recording, transcript, and an automatic Hot/Warm/Cold score. Uses the app's Google Cloud service account (no API key). Optional **phone test call** via Bland AI (needs a Bland key; lead numbers blocked — AI-voice calls to sellers need prior written consent). |
+| **Agents** | **Agents page** (`/agents`): add **calling**, **scraping**, and **script-writing** agents. Each gets its own API key or the **default key** tag (shared per-provider keys set by an admin). **Calling module:** Twilio dials and the call is bridged to **Gemini Live** (μ-law media stream ⇄ PCM). The agent speaks the call flow, handles interruptions, hangs up itself (`end_call` tool: wrong number / stop / voicemail / done), and skips answering machines; you get the recording, transcript, score, and live listen. **Bland AI** is the alternative provider. **Scraping agents** crawl a site within robots.txt (next pages, up to a limit), extract and score properties with an LLM (Gemini / OpenAI / Claude / OpenAI-compatible), and feed the Scraper. **Script-writing agents** draft or improve call flows from a brief and call history. |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
 | **Schedule & remind** | Meeting scheduling + **reminder notifications** (SMS, fired by the scheduler before each meeting). **Area-focus** setting defaults the dial queue to a primary state (MI). |
@@ -56,10 +57,11 @@ skip-trace provider, or Cloud SQL Postgres.
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./dre_capital.db` | SQLite (dev) or Cloud SQL Postgres (prod) |
 | `SECRET_KEY` | dev default | Session signing — override in prod |
-| `TWILIO_ACCOUNT_SID` | (empty) | Twilio click-to-call. Empty = dry-run. |
-| `TWILIO_AUTH_TOKEN` | (empty) | Twilio auth |
+| `TWILIO_ACCOUNT_SID` | (empty) | Twilio click-to-call; also the default key for Twilio + Gemini calling agents. Empty = dry-run. |
+| `TWILIO_AUTH_TOKEN` | (empty) | Twilio auth (also verifies `X-Twilio-Signature` on AI-call callbacks) |
 | `TWILIO_FROM_NUMBER` | (empty) | Caller ID number |
-| `APP_BASE_URL` | `http://localhost:8000` | Public URL for Twilio callbacks |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | (empty) | Default keys for OpenAI / Claude agents (or set them on the Agents page) |
+| `APP_BASE_URL` | `http://localhost:8000` | Public URL for Twilio callbacks and the AI-call media stream (`wss://…/api/ai-calls/twilio/stream`) — must be HTTPS in production |
 | `SKIPTRACE_PROVIDER` | `mock` | `mock` or real provider key |
 | `COMPS_PROVIDER` | `mock` | `mock` or real MLS/PropStream key |
 
@@ -72,6 +74,7 @@ PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh                       # code-only 
 QUO_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh       # set/rotate the company Quo key
 BLAND_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh     # set the AI voice agent (Bland) key
 GOOGLE_MAPS_API_KEY=... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # house photos (Street View Static + Maps Static)
+TWILIO_ACCOUNT_SID=AC... TWILIO_AUTH_TOKEN=... TWILIO_FROM_NUMBER=+1... PROJECT_ID=YOUR_PROJECT_ID ./deploy/deploy.sh  # default Twilio key for calling agents
 ```
 
 The script:
@@ -129,11 +132,24 @@ POST /api/calls/quo/webhooks      — enable Quo auto-sync for the company key (
 GET  /api/auth/me/quo             — my Quo line status (key never returned)
 PUT  /api/auth/me/quo             — save / change / remove my personal Quo key
 GET  /api/ai-calls/status         — AI agent configured? (balance + voices)
-POST /api/ai-calls                — AI agent calls your number with a call flow (consent required)
-GET  /api/ai-calls/{id}           — status, duration, transcript, summary (refreshed from Bland)
-POST /api/ai-calls/{id}/listen    — live audio WebSocket URL (PCM16 LE, 16 kHz mono)
+POST /api/ai-calls                — AI agent call ({agent_id?}: Twilio + Gemini Live or Bland) to your number (consent) or a lead's verified number
+GET  /api/ai-calls/{id}           — status, duration, transcript, summary, score
+POST /api/ai-calls/{id}/listen    — live audio WebSocket URL (Bland: PCM16 LE 16 kHz; Twilio + Gemini: 1-byte track + PCM16)
 POST /api/ai-calls/{id}/stop      — hang up
 GET  /api/ai-calls/{id}/recording — stream the recording
+POST /api/ai-calls/twilio/status  — Twilio call progress + answering-machine callback (public, X-Twilio-Signature)
+WS   /api/ai-calls/twilio/stream  — Twilio Media Stream ⇄ Gemini Live bridge (signed, 15-min stream token)
+WS   /api/ai-calls/{id}/listen-ws — browser live listen for Twilio + Gemini calls (session cookie)
+GET  /api/agents/providers        — agent kinds, providers, key fields, Gemini voices
+GET  /api/agents                  — list agents (?kind=calling|scraping|scripting); keys masked
+POST /api/agents                  — add an agent (own key, or use_default_key = the "default key" tag)
+PATCH /api/agents/{id}            — edit (creator or admin; a masked key keeps the stored one)
+DELETE /api/agents/{id}           — delete (creator or admin)
+POST /api/agents/{id}/test        — check the key / provider (LLM ping, Bland balance, Twilio number)
+GET  /api/agents/defaults         — which default keys are set
+PUT  /api/agents/defaults         — set default keys per provider (admin)
+POST /api/scraper/agent-run       — scraping agent crawls {url, goal?} (robots.txt respected) → scored results
+POST /api/call-flows/draft        — script-writing agent drafts a new flow or improves one (not saved; admin)
 WS   /api/live-agent/ws           — live agent call: mic PCM16 16 kHz in, agent PCM16 24 kHz + JSON events out
 GET  /api/live-agent/status       — Gemini Live readiness (project, model, voice, voices)
 GET  /api/leads/{id}/brief        — call brief: value, tax, debt, MLS, photo URL, per-number verification
@@ -177,7 +193,9 @@ dre-capital/
 │   │   ├── importer.py       — CSV import + stack recompute
 │   │   ├── valuation.py      — comps + MAO
 │   │   ├── calls.py          — click-to-call + logging
-│   │   ├── call_flows.py    — call flow CRUD (qualification scripts)
+│   │   ├── call_flows.py    — call flow CRUD (qualification scripts) + agent drafts
+│   │   ├── agents.py         — agents CRUD, default keys, key test
+│   │   ├── ai_calls.py       — AI calls (Bland / Twilio + Gemini), Twilio callbacks + media stream
 │   │   ├── buyers.py         — buyer network + matching
 │   │   └── contracts.py      — assignment contracts
 │   ├── services/             — business logic
@@ -187,6 +205,10 @@ dre-capital/
 │   │   ├── calling.py        — provider-aware click-to-call (Quo / Twilio) + follow-ups
 │   │   ├── quo.py            — Quo API: line detection, call lookup, AI summary, transcript
 │   │   ├── call_guide.py     — property-aware call guide + Hot/Warm/Cold scoring
+│   │   ├── agents.py         — provider registry, own vs default-key credentials, LLM client
+│   │   ├── phone_agent.py    — calling module: Twilio dial + media stream ⇄ Gemini Live bridge
+│   │   ├── scraping_agent.py — robots-aware crawl + LLM extraction and scoring
+│   │   ├── script_agent.py   — call-flow drafting from a brief + call history
 │   │   ├── buyers.py         — buy-box matching
 │   │   └── importer.py       — CSV import + dedup
 │   ├── templates/            — Jinja2 UI pages (incl. whats_new.html — version log + API reference)

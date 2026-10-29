@@ -1,13 +1,17 @@
 """Scraper router: manage data sources, run scrape jobs, review + import results."""
 from __future__ import annotations
 
+import json
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ScrapeJob, ScrapeResult, ScrapeSource
+from app.models import Agent, ScrapeJob, ScrapeResult, ScrapeSource
 from app.schemas import (
+    ScrapeAgentRunRequest,
     ScrapeImportRequest,
     ScrapeJobCreate,
     ScrapeJobOut,
@@ -16,9 +20,22 @@ from app.schemas import (
     ScrapeSourceOut,
     ScrapeSourceUpdate,
 )
+from app.services.agents import default_agent
 from app.services.scraper import get_source_directory, import_scrape_results, run_scrape_job
+from app.services.scraping_agent import ScrapingError, check_scraping_agent, validate_url
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
+
+
+def _scraping_agent_or_400(db: Session, agent_id: str | None) -> Agent:
+    """The requested scraping agent (or the default one), else a clear 400."""
+    agent = db.get(Agent, agent_id) if agent_id else default_agent(db, "scraping")
+    if agent_id and agent is None:
+        raise HTTPException(400, "Scraping agent not found — it may have been deleted.")
+    try:
+        return check_scraping_agent(agent)
+    except ScrapingError as exc:
+        raise HTTPException(400, str(exc))
 
 
 # ── Sources ────────────────────────────────────────────────────────────────────
@@ -34,6 +51,9 @@ def list_sources(db: Session = Depends(get_db)):
 @router.post("/sources", response_model=ScrapeSourceOut)
 def create_source(body: ScrapeSourceCreate, db: Session = Depends(get_db)):
     """Create a new data source to scrape."""
+    agent_id = body.agent_id or None
+    if agent_id or body.source_type == "agent":
+        agent_id = _scraping_agent_or_400(db, agent_id).id
     source = ScrapeSource(
         name=body.name,
         url=body.url,
@@ -43,6 +63,7 @@ def create_source(body: ScrapeSourceCreate, db: Session = Depends(get_db)):
         search_params=body.search_params,
         api_key=body.api_key,
         auto_scrape=body.auto_scrape,
+        agent_id=agent_id,
     )
     db.add(source)
     db.commit()
@@ -62,7 +83,10 @@ def update_source(
         raise HTTPException(404, "Source not found")
     # Non-nullable columns + secrets: an explicit null means "keep current".
     keep_on_null = {"name", "url", "source_type", "auto_scrape", "search_params", "api_key"}
-    for field, value in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    if "agent_id" in data:
+        data["agent_id"] = _scraping_agent_or_400(db, data["agent_id"]).id if data["agent_id"] else None
+    for field, value in data.items():
         if value is None and field in keep_on_null:
             continue
         setattr(source, field, value)
@@ -106,6 +130,44 @@ def create_job(body: ScrapeJobCreate, db: Session = Depends(get_db)):
     db.refresh(job)
 
     # Run synchronously (sources are small page scrapes, typically <30s)
+    run_scrape_job(db, job)
+    db.refresh(job)
+    return job
+
+
+@router.post("/agent-run", response_model=ScrapeJobOut)
+def agent_run(body: ScrapeAgentRunRequest, db: Session = Depends(get_db)):
+    """Let a scraping agent crawl from ``url`` (up to its page limit) and return the job.
+
+    Runs synchronously — bounded by the agent's ``max_pages``.  The run is saved
+    as an ``agent`` source (reused per agent + URL) so it can be re-run later
+    from the Sources list.
+    """
+    agent = _scraping_agent_or_400(db, body.agent_id)
+    try:
+        url = validate_url(body.url)
+    except ScrapingError as exc:
+        raise HTTPException(400, str(exc))
+    goal = (body.goal or "").strip()
+    params = json.dumps({"goal": goal}) if goal else None
+
+    source = db.execute(
+        select(ScrapeSource)
+        .where(ScrapeSource.source_type == "agent", ScrapeSource.agent_id == agent.id, ScrapeSource.url == url)
+        .order_by(ScrapeSource.created_at)
+        .limit(1)
+    ).scalars().first()
+    if source is None:
+        source = ScrapeSource(name=f"{agent.name} · {urlsplit(url).hostname}"[:255], url=url,
+                              source_type="agent", agent_id=agent.id)
+        db.add(source)
+    source.search_params = params  # the latest goal is what "Scrape" re-runs
+    db.flush()
+
+    job = ScrapeJob(source_id=source.id, search_params=params)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
     run_scrape_job(db, job)
     db.refresh(job)
     return job

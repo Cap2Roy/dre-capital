@@ -52,10 +52,15 @@
 </div>
 
 <div class="card mt-4">
-  <div class="card-header">📞 Phone test call <span class="badge badge-neutral">Bland AI</span></div>
+  <div class="card-header">📞 Phone test call <span id="ai-agent-badge"></span></div>
   <div class="card-body">
     <div id="ai-config-warning" class="gc-context" style="display:none"></div>
     <form id="ai-call-form" class="form">
+      <div class="form-group">
+        <label class="form-label" for="ai-agent">Calling agent</label>
+        <select id="ai-agent" class="form-select"></select>
+        <div class="form-hint">Add agents and their keys on the <a href="/agents">Agents</a> page.</div>
+      </div>
       <div class="grid-2">
         <div class="form-group">
           <label class="form-label" for="ai-number">Call this number (yours)</label>
@@ -108,7 +113,8 @@ const STATUS_BADGES = {
 };
 const SCORE_BADGES = { hot: ["badge-danger", "🔥 Hot"], warm: ["badge-warning", "Warm"], cold: ["badge-info", "Cold"] };
 let _current = null, _poll = null, _timer = null, _startedAt = null;
-let _audioCtx = null, _ws = null, _gain = null, _nextTime = 0;
+let _audioCtx = null, _ws = null, _gain = null;
+let _callAgents = [], _bland = null, _geminiVoices = [];
 
 function aiStatusBadge(s) {
   const [cls, label] = STATUS_BADGES[s] || ["badge-neutral", escHtml(s)];
@@ -137,25 +143,23 @@ async function init() {
   }
   document.getElementById("live-voice").innerHTML = (live.voices || []).map(v =>
     `<option ${v === live.voice ? "selected" : ""}>${escHtml(v)}</option>`).join("");
-  // Phone (Bland)
-  const warn = document.getElementById("ai-config-warning");
-  if (!bland.configured) {
-    warn.style.display = "";
-    warn.innerHTML = `<strong>Phone calls not set up.</strong> ${IS_ADMIN
-      ? 'Add a Bland AI API key in <a href="/settings">Settings → Calling &amp; API Keys → AI Voice Agent</a>.'
-      : 'Ask an admin to add the Bland AI API key in Settings.'}`;
-    document.getElementById("ai-start-btn").disabled = true;
-  } else if (bland.ok === false) {
-    warn.style.display = "";
-    warn.innerHTML = `<strong>Bland AI error:</strong> ${escHtml(bland.error)}`;
-  }
-  const voiceSel = document.getElementById("ai-voice");
-  (bland.voices || []).forEach(v => voiceSel.insertAdjacentHTML("beforeend", `<option value="${escHtml(v)}">${escHtml(v)}</option>`));
-  if (bland.default_voice) voiceSel.value = bland.default_voice;
+  // Phone: calling agents (Twilio + Gemini Live or Bland). No agent → Bland with the Settings key.
+  _bland = bland;
+  const [agents, meta] = await Promise.all([
+    API.get("/api/agents?kind=calling").catch(() => []), API.get("/api/agents/providers").catch(() => ({ gemini_voices: [] })),
+  ]);
+  _callAgents = agents.filter(a => a.active);
+  _geminiVoices = meta.gemini_voices || [];
+  const def = _callAgents.find(a => a.is_default);
+  document.getElementById("ai-agent").innerHTML =
+    (def ? "" : '<option value="">Bland AI (key in Settings)</option>') +
+    _callAgents.map(a => `<option value="${a.id}" ${a.is_default ? "selected" : ""}>${escHtml(a.name)} — ${escHtml(a.provider_label)}</option>`).join("");
+  document.getElementById("ai-agent").addEventListener("change", syncCallAgent);
   // Shared selects
   const flowOpts = flows.map(f => `<option value="${f.id}" ${f.is_default ? "selected" : ""}>${escHtml(f.name)}</option>`).join("")
     || '<option value="">No call flows — create one in Settings</option>';
   document.querySelectorAll(".flow-select").forEach(s => s.innerHTML = flowOpts);
+  syncCallAgent();
   API.get("/api/leads?limit=200").then(r => {
     const items = Array.isArray(r) ? r : (r.items || r.leads || []);
     const opts = items.map(l => `<option value="${l.id}">${escHtml(l.property_address)}${l.property_city ? ", " + escHtml(l.property_city) : ""} — ${escHtml(l.owner_name || "")}</option>`).join("");
@@ -382,7 +386,43 @@ function stopLive() {
   clearInterval(_timer); _timer = null;
 }
 
-// ════════════════ Phone test call (Bland AI) ════════════════
+// ════════════════ Phone test call (calling agents) ════════════════
+function syncCallAgent() {
+  const id = document.getElementById("ai-agent").value;
+  const a = _callAgents.find(x => x.id === id);
+  const warn = document.getElementById("ai-config-warning");
+  const btn = document.getElementById("ai-start-btn");
+  warn.style.display = "none"; btn.disabled = false;
+  let voices, defVoice;
+  if (a) {
+    document.getElementById("ai-agent-badge").innerHTML = `<span class="badge badge-neutral">${escHtml(a.provider_label)}</span>`;
+    if (!a.key_status.ok) {
+      warn.style.display = "";
+      warn.innerHTML = `<strong>${escHtml(a.name)} can't call yet.</strong> ${escHtml(a.key_status.error || "")} <a href="/agents">Fix on Agents</a>`;
+      btn.disabled = true;
+    }
+    const flowSel = document.getElementById("ai-flow");
+    if (a.call_flow_id && [...flowSel.options].some(o => o.value === a.call_flow_id)) flowSel.value = a.call_flow_id;
+    voices = a.provider === "twilio_gemini" ? _geminiVoices : (_bland.voices || []);
+    defVoice = a.voice || (a.provider === "bland" ? _bland.default_voice : "");
+  } else {
+    document.getElementById("ai-agent-badge").innerHTML = '<span class="badge badge-neutral">Bland AI</span>';
+    if (!_bland.configured) {
+      warn.style.display = "";
+      warn.innerHTML = `<strong>Phone calls not set up.</strong> Add a calling agent on the <a href="/agents">Agents</a> page${IS_ADMIN
+        ? ', or a Bland AI API key in <a href="/settings">Settings → Calling &amp; API Keys → AI Voice Agent</a>.' : "."}`;
+      btn.disabled = true;
+    } else if (_bland.ok === false) {
+      warn.style.display = "";
+      warn.innerHTML = `<strong>Bland AI error:</strong> ${escHtml(_bland.error)}`;
+    }
+    voices = _bland.voices || []; defVoice = _bland.default_voice;
+  }
+  const voiceSel = document.getElementById("ai-voice");
+  voiceSel.innerHTML = '<option value="">Default</option>' + voices.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join("");
+  if (defVoice && voices.includes(defVoice)) voiceSel.value = defVoice;
+}
+
 document.getElementById("ai-call-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!document.getElementById("ai-consent").checked) { toast("Please confirm this is your number.", "error"); return; }
@@ -395,6 +435,7 @@ document.getElementById("ai-call-form").addEventListener("submit", async (e) => 
       call_flow_id: document.getElementById("ai-flow").value || null,
       voice: document.getElementById("ai-voice").value || null,
       lead_id: document.getElementById("ai-lead").value || null,
+      agent_id: document.getElementById("ai-agent").value || null,
       consent: true,
     });
     toast("The agent is calling your phone now.", "success");
@@ -450,7 +491,9 @@ function startPoll() {
     if (!_current) return;
     try {
       const c = await API.get(`/api/ai-calls/${_current.id}`);
-      const done = FINAL.has(c.status) && (c.status !== "completed" || (c.has_recording && c.transcript));
+      // Twilio + Gemini calls are fully processed by the time they're final; Bland posts its recording later.
+      const done = FINAL.has(c.status) && (c.status !== "completed" || (c.has_recording && c.transcript)
+        || (c.provider === "twilio_gemini" && (c.has_recording || c.answered_by === "voicemail")));
       showCall(c, false);
       if (done || Date.now() - started > 12 * 60 * 1000) { clearInterval(_poll); _poll = null; loadHistory(); }
     } catch (e) { /* transient — keep polling */ }
@@ -463,13 +506,16 @@ async function hangUp() {
   catch (err) { toast("Couldn't hang up: " + err.message, "error"); }
 }
 
-// Bland live listen: PCM16 LE 16 kHz over WebSocket → Web Audio
+// Live listen. Bland: raw PCM16 LE 16 kHz. Twilio + Gemini ("dre_tracks"): first byte = track
+// (0 caller, 1 agent, 2 agent interrupted, 3 ended) + PCM16 LE 16 kHz; each voice keeps its own
+// playback cursor because agent audio arrives faster than real time.
 async function toggleListen() {
   if (_ws) { stopListening(); showCall(_current, false); return; }
   if (!_current) return;
   try {
-    const { url, sample_rate } = await API.post(`/api/ai-calls/${_current.id}/listen`);
-    startListening(url, sample_rate || 16000);
+    const { url, sample_rate, format } = await API.post(`/api/ai-calls/${_current.id}/listen`);
+    const full = url.startsWith("/") ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${url}` : url;
+    startListening(full, sample_rate || 16000, format === "dre_tracks");
     showCall(_current, false);
   } catch (err) {
     const hint = document.getElementById("ai-listen-hint");
@@ -477,27 +523,36 @@ async function toggleListen() {
   }
 }
 
-function startListening(url, sampleRate) {
+function startListening(url, sampleRate, tracks) {
   _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
   _audioCtx.resume();
   _gain = _audioCtx.createGain();
   _gain.connect(_audioCtx.destination);
-  _nextTime = _audioCtx.currentTime + 0.2;
+  const cursors = [_audioCtx.currentTime + 0.2, _audioCtx.currentTime + 0.2];
+  const agentSources = new Set();
   _ws = new WebSocket(url);
   _ws.binaryType = "arraybuffer";
   _ws.onmessage = (ev) => {
-    if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength < 2) return;
-    const view = new DataView(ev.data);
-    const n = Math.floor(ev.data.byteLength / 2);
+    if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength < 1) return;
+    let track = 0, offset = 0;
+    if (tracks) {
+      track = new Uint8Array(ev.data, 0, 1)[0]; offset = 1;
+      if (track === 2) { agentSources.forEach(s => { try { s.stop(); } catch (_) {} }); agentSources.clear(); cursors[1] = _audioCtx.currentTime; return; }
+      if (track === 3) { stopListening(); showCall(_current, false); return; }
+    }
+    const n = Math.floor((ev.data.byteLength - offset) / 2);
+    if (n < 1) return;
+    const view = new DataView(ev.data, offset);
     const buf = _audioCtx.createBuffer(1, n, sampleRate);
     const ch = buf.getChannelData(0);
     for (let i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
     const src = _audioCtx.createBufferSource();
     src.buffer = buf;
     src.connect(_gain);
-    const at = Math.max(_nextTime, _audioCtx.currentTime + 0.05);
+    const at = Math.max(cursors[track], _audioCtx.currentTime + 0.05);
     src.start(at);
-    _nextTime = at + buf.duration;
+    cursors[track] = at + buf.duration;
+    if (track === 1) { agentSources.add(src); src.onended = () => agentSources.delete(src); }
   };
   _ws.onclose = () => {
     _ws = null;

@@ -11,15 +11,15 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import AiCall, CallFlow, Lead, User
+from app.database import SessionLocal, get_db
+from app.models import Agent, AiCall, CallFlow, Lead, User
 from app.schemas import AiCallCreate, AiCallOut
-from app.services import ai_agent
+from app.services import ai_agent, phone_agent
 from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/ai-calls", tags=["ai-calls"])
@@ -120,28 +120,120 @@ def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depen
         if lead is None:
             raise HTTPException(404, "Lead not found")
 
+    agent = None
+    if payload.agent_id:
+        agent = db.get(Agent, payload.agent_id)
+        if agent is None or agent.kind != "calling":
+            raise HTTPException(404, "Calling agent not found")
+        if not agent.active:
+            raise HTTPException(400, f"{agent.name} is inactive.")
+    else:
+        from app.services.agents import default_agent
+        agent = default_agent(db, "calling")
+    if agent is not None and agent.call_flow_id and not payload.call_flow_id:
+        flow = db.get(CallFlow, agent.call_flow_id) or flow
+
     greet = (payload.greet_name or "").strip()
     if phone is not None and not greet:
         greet = ai_agent.owner_greeting(lead)
     call = AiCall(
         user_id=user.id,
+        agent_id=agent.id if agent else None,
         to_number=number,
         phone_id=phone.id if phone else None,
         greet_name=greet or ai_agent.greeting_default(user),
         lead_id=lead.id if lead else None,
         call_flow_id=flow.id,
-        voice=(payload.voice or "").strip() or (get_setting(db, "ai_voice") or "").strip() or None,
+        voice=(payload.voice or "").strip() or (agent.voice if agent else None)
+              or (get_setting(db, "ai_voice") or "").strip() or None,
     )
     db.add(call)
     db.flush()
     try:
-        ai_agent.start_call(db, call, flow, lead)
-    except ai_agent.AiAgentError as exc:
+        if agent is not None and agent.provider == "twilio_gemini":
+            phone_agent.start_call(db, call)
+        else:
+            ai_agent.start_call(db, call, flow, lead)
+    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError) as exc:
         db.rollback()
+        if agent is not None:
+            agent.last_error = str(exc)[:500]
+            db.commit()
         raise HTTPException(502, str(exc))
+    if agent is not None:
+        agent.last_used_at, agent.last_error = utcnow(), None
     db.commit()
     db.refresh(call)
     return call
+
+
+# ── Twilio phone calls (Gemini Live agent) ──────────────────────────────────
+
+@router.post("/twilio/status")
+async def twilio_status(request: Request, db: Session = Depends(get_db)):
+    """Twilio call-progress + answering-machine callbacks (public; signature-verified)."""
+    call = db.get(AiCall, request.query_params.get("ai_call_id", ""))
+    if call is None:
+        raise HTTPException(404, "Unknown call")
+    params = dict(await request.form())
+    url = phone_agent.status_url(call.id)
+    if not phone_agent.verify_twilio_signature(db, call, url, params, request.headers.get("X-Twilio-Signature", "")):
+        raise HTTPException(403, "Invalid Twilio signature")
+    phone_agent.handle_status_callback(db, call, params)
+    db.commit()
+    return {"ok": True}
+
+
+@router.websocket("/twilio/stream")
+async def twilio_stream(websocket: WebSocket):
+    """Twilio Media Stream ⇄ Gemini Live. Authenticated by the signed stream token."""
+    await websocket.accept()
+    db = SessionLocal()
+    try:
+        await phone_agent.bridge(websocket, db)
+    except Exception:
+        import logging
+        logging.getLogger("uvicorn.error").exception("Twilio stream bridge failed")
+    finally:
+        db.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.websocket("/{call_id}/listen-ws")
+async def listen_ws(call_id: str, websocket: WebSocket):
+    """Browser 'Listen live' for Twilio + Gemini calls. Frames: 1 byte track
+    (0 caller, 1 agent, 2 clear agent audio, 3 call ended) + PCM16 LE 16 kHz."""
+    from app.services.auth import SESSION_COOKIE, decode_session_token
+    await websocket.accept()
+    db = SessionLocal()
+    try:
+        token = websocket.cookies.get(SESSION_COOKIE)
+        payload = decode_session_token(token) if token else None
+        user = db.get(User, payload.get("uid")) if payload else None
+        call = db.get(AiCall, call_id)
+        if user is None or call is None or (call.user_id != user.id and user.role != "admin"):
+            await websocket.close(code=4403)
+            return
+    finally:
+        db.close()
+    q = phone_agent.subscribe(call_id)
+    try:
+        while True:
+            frame = await q.get()
+            await websocket.send_bytes(frame)
+            if frame[:1] == b"\x03":
+                break
+    except Exception:
+        pass
+    finally:
+        phone_agent.unsubscribe(call_id, q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.get("", response_model=list[AiCallOut])
@@ -157,7 +249,8 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
     """Current state — refreshed from Bland until the call is final and processed."""
     call = _own_call(db, _user(request, db), call_id)
     try:
-        ai_agent.refresh(db, call)
+        if call.provider == "bland":
+            ai_agent.refresh(db, call)
         if call.phone_id and call.outcome is None:
             ai_agent.finalize_lead_call(db, call)
     except ai_agent.AiAgentError as exc:
@@ -171,6 +264,10 @@ def get_test_call(call_id: str, request: Request, db: Session = Depends(get_db))
 def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
     """WebSocket URL for live audio (PCM16 little-endian, 16 kHz, mono)."""
     call = _own_call(db, _user(request, db), call_id)
+    if call.provider == "twilio_gemini":
+        if call.status not in ("queued", "in-progress"):
+            raise HTTPException(409, "The call isn't live.")
+        return {"url": f"/api/ai-calls/{call.id}/listen-ws", "sample_rate": 16000, "format": "dre_tracks"}
     try:
         return {"url": ai_agent.listen_url(db, call), "sample_rate": 16000, "format": "pcm_s16le"}
     except ai_agent.AiAgentError as exc:
@@ -181,13 +278,17 @@ def listen(call_id: str, request: Request, db: Session = Depends(get_db)):
 def hang_up(call_id: str, request: Request, db: Session = Depends(get_db)):
     call = _own_call(db, _user(request, db), call_id)
     try:
-        ai_agent.stop(db, call)
-    except ai_agent.AiAgentError as exc:
+        if call.provider == "twilio_gemini":
+            phone_agent.hang_up(db, call)
+        else:
+            ai_agent.stop(db, call)
+    except (ai_agent.AiAgentError, phone_agent.PhoneAgentError) as exc:
         raise HTTPException(502, str(exc))
-    # Don't mark it final locally: after a hang-up Bland still finalizes the call
+    # Don't mark it final locally: the provider still finalizes the call
     # (duration, recording, transcript) — keep tracking its real status.
     try:
-        ai_agent.refresh(db, call)
+        if call.provider == "bland":
+            ai_agent.refresh(db, call)
     except ai_agent.AiAgentError:
         pass
     db.commit()

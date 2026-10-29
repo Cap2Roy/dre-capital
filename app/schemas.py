@@ -346,12 +346,13 @@ class SourceListOut(ORMBase):
 class ScrapeSourceCreate(BaseModel):
     name: str
     url: str
-    source_type: str  # rentcast, arcgis, county_tax, public_api, html
+    source_type: str  # rentcast, arcgis, county_tax, public_api, html, agent
     state: Optional[str] = None
     county: Optional[str] = None
     search_params: Optional[str] = None  # JSON string
     api_key: Optional[str] = None
     auto_scrape: bool = False
+    agent_id: Optional[str] = None  # scraping agent: the crawler for "agent" sources, LLM parse + scoring for others
 
 
 class ScrapeSourceUpdate(BaseModel):
@@ -364,6 +365,7 @@ class ScrapeSourceUpdate(BaseModel):
     search_params: Optional[str] = None
     api_key: Optional[str] = None
     auto_scrape: Optional[bool] = None
+    agent_id: Optional[str] = None  # explicit null clears the agent
 
 
 class ScrapeSourceOut(ORMBase):
@@ -376,12 +378,19 @@ class ScrapeSourceOut(ORMBase):
     search_params: Optional[str] = None
     active: bool
     auto_scrape: bool = False
+    agent_id: Optional[str] = None
     created_at: UTCDateTime
 
 
 class ScrapeJobCreate(BaseModel):
     source_id: str
     search_params: Optional[str] = None  # JSON overrides
+
+
+class ScrapeAgentRunRequest(BaseModel):
+    agent_id: Optional[str] = None  # omitted → default scraping agent
+    url: str
+    goal: Optional[str] = None
 
 
 class ScrapeResultOut(ORMBase):
@@ -566,6 +575,7 @@ class MeetingCreate(BaseModel):
 class AiCallCreate(BaseModel):
     to_number: Optional[str] = None         # tester's own phone (rehearsal) …
     phone_id: Optional[str] = None          # … or a lead's verified number (real call to the owner)
+    agent_id: Optional[str] = None          # calling agent; default calling agent if omitted
     greet_name: Optional[str] = None        # who the agent asks for ("Hi, is this ___?")
     lead_id: Optional[str] = None           # rehearse this property's conversation
     call_flow_id: Optional[str] = None      # default flow if omitted
@@ -583,6 +593,7 @@ class AiCallOut(ORMBase):
     provider: str
     provider_call_id: Optional[str] = None
     phone_id: Optional[str] = None
+    agent_id: Optional[str] = None
     outcome: Optional[str] = None
     status: str
     answered_by: Optional[str] = None

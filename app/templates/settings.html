@@ -425,7 +425,10 @@
   <div class="card">
     <div class="card-header">
       Call Flows
-      <button class="btn btn-gold btn-sm" onclick="showCallFlowModal()">+ New Call Flow</button>
+      <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="showScriptAgentModal()">✨ Write with agent</button>
+        <button class="btn btn-gold btn-sm" onclick="showCallFlowModal()">+ New Call Flow</button>
+      </div>
     </div>
     <div class="card-body" id="call-flows-list">
       <div class="empty-state"><div class="icon">📋</div>Loading call flows…</div>
@@ -936,6 +939,7 @@ async function loadCallFlows() {
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap">
               <button class="btn btn-outline btn-sm" onclick="showCallFlowModal('${f.id}')">Edit</button>
+              <button class="btn btn-outline btn-sm" onclick="showScriptAgentModal('${f.id}')">✨ Improve</button>
               ${!f.is_default ? `<button class="btn btn-outline btn-sm" onclick="setDefaultFlow('${f.id}')">Set Default</button>` : ''}
               <button class="btn btn-outline btn-sm" onclick="deleteFlow('${f.id}')">Delete</button>
             </div>
@@ -945,16 +949,23 @@ async function loadCallFlows() {
   } catch (err) { toast("Error: " + err.message, "error"); }
 }
 
-async function showCallFlowModal(id) {
+// ``draft`` (from a scripting agent) prefills the editor for a NEW flow; nothing
+// is saved until the user clicks Create.
+async function showCallFlowModal(id, draft) {
   let flow = null;
   if (id) {
     try { flow = await API.get(`/api/call-flows/${id}`); } catch (err) { toast("Error: " + err.message, "error"); return; }
   }
-  const f = flow || {};
+  const f = flow || draft || {};
   const qs = (f.questions || []).map(q => esc(q)).join("\n");
   const rs = (f.rules || []).map(r => esc(r)).join("\n");
   const sc = f.scoring || {};
-  const html = `
+  const notes = draft ? `
+    <div id="cf-agent-notes" style="background:var(--info-bg); color:var(--info); border-radius:var(--r-md); padding:10px 12px; margin-bottom:14px">
+      <div style="font-weight:600; margin-bottom:4px">✨ Draft from ${esc(draft.agent ? draft.agent.name : 'agent')} — review, edit, then Create. Nothing is saved yet.</div>
+      ${draft.notes ? `<div class="text-sm" style="white-space:pre-wrap">${esc(draft.notes)}</div>` : ''}
+    </div>` : '';
+  const html = notes + `
     <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="cf-name" value="${esc(f.name || '')}"></div>
     <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="cf-desc" value="${esc(f.description || '')}"></div>
     <div class="form-group"><label class="form-label">Role / Persona</label><textarea class="form-textarea" id="cf-role" rows="3">${esc(f.role || '')}</textarea></div>
@@ -969,7 +980,101 @@ async function showCallFlowModal(id) {
     <div class="form-group"><label class="form-label"><input type="checkbox" id="cf-active" ${f.active !== false ? 'checked' : ''}> Active</label></div>`;
   const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="saveCallFlow('${id || ''}')">${id ? 'Save' : 'Create'}</button>`;
-  openModal(id ? "Edit Call Flow" : "New Call Flow", html, footer, { wide: true });
+  openModal(id ? "Edit Call Flow" : (draft ? "New Call Flow — agent draft" : "New Call Flow"), html, footer, { wide: true });
+}
+
+// ── Scripting agent: write / improve a call flow ───────────────
+const LIST_TYPES = [
+  ["pre_foreclosure", "Pre-foreclosure"], ["tax_delinquent", "Tax delinquent"], ["probate", "Probate"],
+  ["divorce", "Divorce"], ["absentee_owner", "Absentee owner"], ["tired_landlord", "Tired landlord"],
+  ["vacant_code_violation", "Vacant / code violation"],
+];
+let _scriptAgents = [];
+
+function _apiErr(err) {
+  const m = /^\d+ ([\s\S]*)$/.exec((err && err.message) || "");
+  if (m) { try { const j = JSON.parse(m[1]); if (j && typeof j.detail === "string") return j.detail; } catch (_) {} }
+  return (err && err.message) || String(err);
+}
+
+async function showScriptAgentModal(baseId) {
+  const base = baseId ? _flows.find(x => x.id === baseId) : null;
+  if (baseId && !base) { toast("Call flow not found — reload the page", "error"); return; }
+  try { _scriptAgents = ((await API.get("/api/agents?kind=scripting")) || []).filter(a => a.active); }
+  catch (err) { toast("Error loading agents: " + _apiErr(err), "error"); return; }
+  const title = base ? `✨ Improve “${esc(base.name)}”` : "✨ Write a call flow with an agent";
+  if (!_scriptAgents.length) {
+    openModal(title, `<div class="empty-state"><div class="icon">✨</div>No active scripting agent yet.<br>
+      <a href="/agents">Add one on the Agents page</a> (Gemini works with no key), then come back.</div>`,
+      `<button class="btn btn-outline" onclick="closeModal()">Close</button>`);
+    return;
+  }
+  const def = _scriptAgents.find(a => a.is_default) || _scriptAgents[0];
+  const opts = _scriptAgents.map(a => `<option value="${esc(a.id)}" ${a.id === def.id ? 'selected' : ''}>${esc(a.name)} — ${esc(a.provider_label)}${a.effective_model ? ' · ' + esc(a.effective_model) : ''}${a.is_default ? ' (default)' : ''}</option>`).join("");
+  const lt = LIST_TYPES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
+  const html = `
+    <div class="form-group"><label class="form-label">Scripting agent</label>
+      <select class="form-select" id="sa-agent" onchange="_scriptAgentKeyHint()">${opts}</select>
+      <div class="text-xs text-muted" style="margin-top:4px"><span id="sa-key-hint"></span> <a href="/agents">Manage agents</a></div></div>
+    <div class="form-group"><label class="form-label">${base ? 'What should change?' : 'Brief — who are we calling and how?'}</label>
+      <textarea class="form-textarea" id="sa-brief" rows="4" maxlength="4000" placeholder="${base ? 'e.g. Shorter, softer on money questions' : 'e.g. Probate leads in Detroit — gentle, the heir may not be the decision-maker'}">${base ? 'Tighten this script and fix what the call history shows isn\'t working.' : ''}</textarea></div>
+    <div class="form-group"><label class="form-label">Lead list type (sets the tone)</label>
+      <select class="form-select" id="sa-list-type"><option value="">— Any / mixed —</option>${lt}</select></div>
+    ${base ? `<div class="form-group"><label class="form-label"><input type="checkbox" id="sa-history" checked> Learn from call history (outcomes, scores, skipped questions, call summaries on this flow)</label></div>` : ''}
+    <div class="text-xs text-muted">${base ? 'The result opens as a new flow named “' + esc(base.name) + ' (improved)” — the original is not changed.' : 'The draft opens in the editor — nothing is saved until you click Create.'}</div>
+    <div id="sa-status" class="text-sm" style="margin-top:10px"></div>`;
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="sa-go" onclick="runScriptAgent('${base ? base.id : ''}')">${base ? '✨ Improve' : '✨ Write draft'}</button>`;
+  openModal(title, html, footer, { wide: true });
+  _scriptAgentKeyHint();
+}
+
+function _scriptAgentKeyHint() {
+  const sel = document.getElementById("sa-agent");
+  const hint = document.getElementById("sa-key-hint");
+  if (!sel || !hint) return;
+  const a = _scriptAgents.find(x => x.id === sel.value);
+  const ks = (a && a.key_status) || {};
+  hint.textContent = ks.ok ? "✓ Key OK." : ("⚠ " + (ks.error || "Key not configured."));
+  hint.style.color = ks.ok ? "var(--success)" : "var(--danger)";
+}
+
+async function runScriptAgent(baseId) {
+  const brief = document.getElementById("sa-brief").value.trim();
+  const status = document.getElementById("sa-status");
+  if (brief.length < 10) { status.style.color = "var(--danger)"; status.textContent = "Write a brief of at least 10 characters."; return; }
+  const body = {
+    agent_id: document.getElementById("sa-agent").value || null,
+    brief,
+    base_flow_id: baseId || null,
+    list_type: document.getElementById("sa-list-type").value || null,
+    use_call_history: !!(baseId && document.getElementById("sa-history") && document.getElementById("sa-history").checked),
+  };
+  const go = document.getElementById("sa-go");
+  const fields = ["sa-agent", "sa-brief", "sa-list-type", "sa-history"].map(i => document.getElementById(i)).filter(Boolean);
+  fields.forEach(el => { el.disabled = true; });
+  go.disabled = true; go.textContent = "Writing…";
+  status.style.color = "var(--text-2)";
+  status.textContent = "⏳ The agent is writing the script — this can take up to a minute.";
+  let draft;
+  try {
+    draft = await API.post("/api/call-flows/draft", body);
+  } catch (err) {
+    if (!document.getElementById("sa-go")) return;  // modal closed meanwhile
+    fields.forEach(el => { el.disabled = false; });
+    go.disabled = false; go.textContent = baseId ? "✨ Improve" : "✨ Write draft";
+    status.style.color = "var(--danger)"; status.textContent = "⚠ " + _apiErr(err);
+    return;
+  }
+  if (!document.getElementById("sa-go")) return;  // user cancelled while the agent worked
+  closeModal();
+  if (baseId) {
+    const base = _flows.find(x => x.id === baseId);
+    draft.name = ((base ? base.name : draft.name) + " (improved)").slice(0, 160);
+  }
+  draft.is_default = false;
+  draft.active = true;
+  showCallFlowModal(null, draft);
 }
 
 async function saveCallFlow(id) {

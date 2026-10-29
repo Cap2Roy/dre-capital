@@ -36,6 +36,20 @@ class AiAgentError(RuntimeError):
 
 # ── HTTP ────────────────────────────────────────────────────────────────────
 
+def call_key(db: Session, ai_call: AiCall) -> str:
+    """Bland key for this call: its calling agent's credentials, else the default Bland key."""
+    if ai_call.agent_id:
+        from app.models import Agent
+        from app.services.agents import AgentError, credentials
+        agent = db.get(Agent, ai_call.agent_id)
+        if agent is not None:
+            try:
+                return credentials(db, agent)["api_key"]
+            except AgentError as exc:
+                raise AiAgentError(str(exc)) from exc
+    return api_key(db)
+
+
 def api_key(db: Session) -> str:
     from app.services.settings import get_setting
     return (get_setting(db, "bland_api_key") or "").strip()
@@ -68,9 +82,9 @@ def _error_message(data: dict) -> str:
     return "; ".join(p for p in parts if p) or data.get("message") or ""
 
 
-def account_status(db: Session) -> dict:
+def account_status(db: Session, key: Optional[str] = None) -> dict:
     """Validate the key; return balance + curated voice names (never the key)."""
-    key = api_key(db)
+    key = key or api_key(db)
     me = _request(key, "GET", "/v1/me")
     voices = _request(key, "GET", "/v1/voices").get("voices", [])
     curated = sorted({v["name"] for v in voices if "Bland Curated" in (v.get("tags") or []) and v.get("name")})
@@ -173,6 +187,11 @@ def build_agent_script(db: Session, flow: CallFlow, greet_name: str, lead: Optio
 def start_call(db: Session, ai_call: AiCall, flow: CallFlow, lead: Optional[Lead]) -> AiCall:
     real_call = ai_call.phone_id is not None
     script = build_agent_script(db, flow, ai_call.greet_name or "there", lead, real_call=real_call)
+    if ai_call.agent_id:
+        from app.models import Agent
+        agent = db.get(Agent, ai_call.agent_id)
+        if agent is not None and agent.instructions:
+            script["task"] += "\n\nADDITIONAL INSTRUCTIONS FROM YOUR TEAM:\n" + agent.instructions.strip()
     body = {
         "phone_number": ai_call.to_number,
         "task": script["task"],
@@ -186,7 +205,7 @@ def start_call(db: Session, ai_call: AiCall, flow: CallFlow, lead: Optional[Lead
     }
     if ai_call.voice:
         body["voice"] = ai_call.voice
-    data = _request(api_key(db), "POST", "/v1/calls", json_body=body)
+    data = _request(call_key(db, ai_call), "POST", "/v1/calls", json_body=body)
     ai_call.provider_call_id = data.get("call_id")
     ai_call.status = "queued"
     db.flush()
@@ -211,7 +230,7 @@ def refresh(db: Session, ai_call: AiCall) -> AiCall:
     # Done refreshing once final — completed calls wait for recording + transcript.
     if ai_call.status in FINAL_STATUSES and (ai_call.status != "completed" or (ai_call.recording_url and ai_call.transcript)):
         return ai_call
-    d = _request(api_key(db), "GET", f"/v1/calls/{ai_call.provider_call_id}")
+    d = _request(call_key(db, ai_call), "GET", f"/v1/calls/{ai_call.provider_call_id}")
     queue = (d.get("queue_status") or "").lower()
     status = (d.get("status") or "").lower()
     if queue.endswith("error") or status == "failed":
@@ -247,7 +266,7 @@ def listen_url(db: Session, ai_call: AiCall) -> str:
     if not ai_call.provider_call_id:
         raise AiAgentError("The call hasn't been placed yet.")
     try:
-        data = _request(api_key(db), "POST", f"/v1/calls/{ai_call.provider_call_id}/listen")
+        data = _request(call_key(db, ai_call), "POST", f"/v1/calls/{ai_call.provider_call_id}/listen")
     except AiAgentError as exc:
         if "listen" in str(exc).lower() and "pref" in str(exc).lower():
             raise AiAgentError("Live listen is off for your Bland account — enable it in Bland → Settings "
@@ -261,14 +280,14 @@ def listen_url(db: Session, ai_call: AiCall) -> str:
 
 def stop(db: Session, ai_call: AiCall) -> None:
     if ai_call.provider_call_id and ai_call.status not in FINAL_STATUSES:
-        _request(api_key(db), "POST", f"/v1/calls/{ai_call.provider_call_id}/stop")
+        _request(call_key(db, ai_call), "POST", f"/v1/calls/{ai_call.provider_call_id}/stop")
 
 
 def stream_recording(db: Session, ai_call: AiCall) -> tuple[Iterator[bytes], str]:
     """Stream the recording through the CRM (the provider URL is never exposed)."""
     if not ai_call.recording_url:
         raise AiAgentError("No recording yet — it's ready about a minute after the call ends.")
-    headers = {"Authorization": f"Bearer {api_key(db)}"} if "bland.ai" in ai_call.recording_url else {}
+    headers = {"Authorization": f"Bearer {call_key(db, ai_call)}"} if "bland.ai" in ai_call.recording_url else {}
     client = httpx.Client(timeout=60.0, follow_redirects=True)
     resp = client.send(client.build_request("GET", ai_call.recording_url, headers=headers), stream=True)
     if resp.status_code >= 400:

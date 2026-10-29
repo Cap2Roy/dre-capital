@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import time
 import wave
 from array import array
@@ -89,18 +90,39 @@ def status(db: Session) -> dict:
 
 # ── Session config ──────────────────────────────────────────────────────────
 
-def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead], voice: str):
-    """(LiveConnectConfig, kickoff_text) for a call-flow agent."""
+def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[Lead], voice: str, *,
+                   real_call: bool = False, phone: bool = False, extra_instructions: Optional[str] = None):
+    """(LiveConnectConfig, kickoff_text) for a call-flow agent.
+
+    ``phone`` adds the ``end_call`` tool so the agent can hang up itself (wrong
+    number, stop request, voicemail, call finished). ``real_call`` makes it verify
+    it reached the owner before anything else.
+    """
     from google.genai import types
     from app.services.ai_agent import build_agent_script
 
-    script = build_agent_script(db, flow, greet_name, lead)
+    script = build_agent_script(db, flow, greet_name, lead, real_call=real_call)
     instruction = (
         script["task"]
         + "\n\nThis is a live phone conversation. Keep every turn short (1–2 sentences), speak naturally, "
           "let the other person finish, and stop talking immediately if they interrupt. "
           f"Start the call by saying exactly: \"{script['first_sentence']}\""
     )
+    if extra_instructions:
+        instruction += "\n\nADDITIONAL INSTRUCTIONS FROM YOUR TEAM:\n" + extra_instructions.strip()
+    tools = None
+    if phone:
+        instruction += (
+            "\n\nYou can hang up with the end_call tool. Say a brief polite goodbye first, then call end_call. "
+            "Use it when: the call is complete; it's a wrong number or not the owner; they ask you to stop or remove "
+            "them; you reached voicemail or an answering machine (do not leave a message); or they're hostile.")
+        tools = [types.Tool(function_declarations=[types.FunctionDeclaration(
+            name="end_call",
+            description="Hang up the phone call after saying goodbye.",
+            parameters={"type": "OBJECT", "properties": {"reason": {"type": "STRING", "enum": [
+                "completed", "wrong_number", "stop_request", "voicemail", "not_interested", "hostile", "other"]}},
+                "required": ["reason"]},
+        )])]
     cfg = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         system_instruction=instruction,
@@ -110,6 +132,7 @@ def session_config(db: Session, flow: CallFlow, greet_name: str, lead: Optional[
         ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
+        tools=tools,
     )
     kickoff = f"(The call has connected and {greet_name} picked up. Say your opening line now.)"
     return cfg, kickoff
@@ -199,6 +222,8 @@ class Transcript:
         self.turns: list[list[str]] = []   # [who, text]
 
     def add(self, who: str, fragment: str) -> None:
+        # Gemini marks non-speech as "<noise>", "<no speech detected>" — not words anyone said.
+        fragment = re.sub(r"<[^<>]{1,40}>", "", fragment or "")
         if not fragment:
             return
         if self.turns and self.turns[-1][0] == who:

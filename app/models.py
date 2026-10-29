@@ -465,6 +465,8 @@ class ScrapeSource(TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Whether this source should be scraped by the daily auto-scrape scheduler.
     auto_scrape: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Scraping agent that reads this source's pages (source_type "agent").
+    agent_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
     jobs: Mapped[list["ScrapeJob"]] = relationship(back_populates="source", cascade="all, delete-orphan")
 
 
@@ -544,6 +546,39 @@ class CallFlow(TimestampMixin, Base):
 
 
 
+class Agent(TimestampMixin, Base):
+    """A configured AI agent the team can use.
+
+    ``kind``: calling (dials and speaks a call flow), scraping (reads websites
+    into the Scraper), scripting (writes / improves call flows).
+    ``provider``: twilio_gemini | bland (calling); gemini | openai | anthropic |
+    openai_compatible (scraping / scripting).
+    ``use_default_key`` is the "default key" tag: the agent uses the provider's
+    shared default credentials instead of its own. Own secrets are never
+    returned by the API.
+    """
+    __tablename__ = "agents"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    use_default_key: Mapped[bool] = mapped_column(Boolean, default=True)
+    api_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)      # Twilio: auth token
+    account_sid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)   # Twilio only
+    from_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)   # Twilio only
+    base_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)     # OpenAI-compatible only
+    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True)
+    voice: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    max_pages: Mapped[int] = mapped_column(Integer, default=5)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)   # default agent of its kind
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
 class AiCall(TimestampMixin, Base):
     """A test call placed by the AI voice agent (Bland) speaking a call flow.
 
@@ -561,6 +596,7 @@ class AiCall(TimestampMixin, Base):
     # callback_requested | warm | dnc_request | no_answer | voicemail
     outcome: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     call_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
     greet_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     lead_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
     call_flow_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("call_flows.id", ondelete="SET NULL"), nullable=True)

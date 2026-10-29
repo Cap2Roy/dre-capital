@@ -10,6 +10,10 @@ Source types:
   - county_tax:  County property appraiser / tax collector sites (HTML scraping)
   - public_api:  REST APIs that return JSON property data
   - html:        Generic HTML page with property listings
+  - agent:       A scraping agent crawls from the URL (see app.services.scraping_agent)
+
+Any source may set ``agent_id``: that scraping agent then does the LLM parse +
+scoring step instead of the env-var LLM config below.
 
 The LLM is used to:
   1. Parse raw HTML/JSON into structured property records
@@ -40,6 +44,8 @@ from app.services.stacking import (
     get_or_create_lead,
     recompute_stack_depths,
 )
+from app.services import scraping_agent
+from app.services.agents import AgentError
 from app.timeutil import utcnow
 
 # ── Source directory ──────────────────────────────────────────────────────────
@@ -716,14 +722,23 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
     """Execute a scrape job: fetch data, parse with LLM, store results.
 
     This is a synchronous function — called from the API endpoint inline.
-    Updates the job in-place.
+    Updates the job in-place.  ``agent`` sources are crawled by their scraping
+    agent; other sources with ``agent_id`` use that agent for parse + scoring.
     """
     source = job.source
+    if source.source_type == "agent":
+        scraping_agent.run_agent_job(db, job)
+        return
+
     job.status = ScrapeJobStatus.RUNNING
     job.started_at = utcnow()
     db.commit()
 
+    agent = None
     try:
+        if source.agent_id:
+            agent = scraping_agent.source_agent(db, source)
+
         # Parse search params
         params: dict[str, Any] = {}
         if source.search_params:
@@ -748,6 +763,17 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
             record_usage(db)
         raw_text = adapter(source.url, params, api_key)
 
+        structured = source.source_type in ("rentcast", "arcgis")
+        if agent and not structured:
+            # The scraping agent reads the page and scores what it finds.
+            leads = scraping_agent.assist_source_parse(db, agent, source, raw_text, None, params)
+            scraping_agent.store_leads(db, job, leads)
+            job.llm_summary = scraping_agent.summarize(agent, leads)
+            job.status = ScrapeJobStatus.COMPLETED
+            job.completed_at = utcnow()
+            db.commit()
+            return
+
         # Parse raw data into structured records using LLM or HTML parser
         records = llm_parse_raw_data(raw_text)
 
@@ -761,6 +787,17 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
         # Normalize ArcGIS feature-service records to our schema
         if source.source_type == "arcgis":
             records = [_normalize_arcgis(r) for r in records if isinstance(r, dict)]
+
+        if agent:
+            # Structured records: the scraping agent only scores them.
+            leads = scraping_agent.assist_source_parse(db, agent, source, raw_text, records, params)
+            scraping_agent.store_leads(db, job, leads)
+            job.total_found = len(records)
+            job.llm_summary = scraping_agent.summarize(agent, leads)
+            job.status = ScrapeJobStatus.COMPLETED
+            job.completed_at = utcnow()
+            db.commit()
+            return
 
         # Store raw results
         job.raw_results = json.dumps(records[:200])  # cap at 200 to avoid huge DB rows
@@ -782,6 +819,17 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
         job.status = ScrapeJobStatus.COMPLETED
         job.completed_at = utcnow()
 
+    except AgentError as exc:
+        job.status = ScrapeJobStatus.FAILED
+        job.error_message = f"Scraping agent “{agent.name if agent else '?'}”: {exc}"[:1000]
+        job.completed_at = utcnow()
+        if agent:
+            agent.last_error = str(exc)[:1000]
+            agent.last_used_at = utcnow()
+    except scraping_agent.ScrapingError as exc:
+        job.status = ScrapeJobStatus.FAILED
+        job.error_message = str(exc)[:1000]
+        job.completed_at = utcnow()
     except Exception as exc:
         job.status = ScrapeJobStatus.FAILED
         job.error_message = _friendly_error(exc, source.source_type, source.url)

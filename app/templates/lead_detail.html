@@ -293,12 +293,26 @@ async function removeConsent() {
 }
 
 async function aiCallOwner(phoneId) {
-  let v;
-  try { v = await API.get(`/api/ai-calls/verify/${phoneId}`); } catch (e) { toast(e.message, "error"); return; }
-  if (!v.ai_allowed) { toast("AI can't call this number: " + (v.reason || "not verified"), "error"); loadLead(); return; }
-  if (!confirm(`The AI agent will call ${fmtPhone(v.number)} now and speak the default call flow for this property. Continue?`)) return;
+  let v, agents;
   try {
-    const call = await API.post("/api/ai-calls", { phone_id: phoneId });
+    [v, agents] = await Promise.all([API.get(`/api/ai-calls/verify/${phoneId}`), API.get("/api/agents?kind=calling").catch(() => [])]);
+  } catch (e) { toast(e.message, "error"); return; }
+  if (!v.ai_allowed) { toast("AI can't call this number: " + (v.reason || "not verified"), "error"); loadLead(); return; }
+  agents = agents.filter(a => a.active);
+  const opts = agents.map(a => `<option value="${a.id}" ${a.is_default ? "selected" : ""} ${a.key_status.ok ? "" : "disabled"}>${escHtml(a.name)} — ${escHtml(a.provider_label)}${a.key_status.ok ? "" : " (key missing)"}</option>`).join("");
+  openModal("🤖 AI call to the owner", `
+    <p class="text-sm">The agent will call <strong>${escHtml(fmtPhone(v.number))}</strong> now and speak its call flow for this property.</p>
+    <div class="form-group mt-4"><label class="form-label">Calling agent</label>
+      <select id="ai-owner-agent" class="form-select">${agents.some(a => a.is_default) ? "" : '<option value="">Bland AI (key in Settings)</option>'}${opts}</select>
+      <div class="form-hint">Manage agents and keys on the <a href="/agents">Agents</a> page.</div></div>`,
+    `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="startOwnerAiCall('${phoneId}')">📞 Call now</button>`);
+}
+
+async function startOwnerAiCall(phoneId) {
+  try {
+    const call = await API.post("/api/ai-calls", { phone_id: phoneId, agent_id: document.getElementById("ai-owner-agent").value || null });
+    closeModal();
     toast("AI agent is calling the owner — follow it on AI Test Call.", "success");
     window.location.href = `/ai-test-call?call=${call.id}`;
   } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }

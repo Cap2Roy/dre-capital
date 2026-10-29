@@ -7,15 +7,18 @@ Hot/Warm/Cold scoring rubric.  Exactly one flow may be marked ``is_default``.
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import CallFlow, Lead
+from app.models import Agent, CallFlow, Lead
 from app.schemas import CallFlowCreate, CallFlowOut, CallFlowUpdate, CallScoreRequest
 from app.services.auth import require_admin, require_user
+from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/call-flows", tags=["call-flows"])
 
@@ -100,6 +103,65 @@ def score_call(payload: CallScoreRequest, db: Session = Depends(get_db), _user=D
     if not flow:
         raise HTTPException(404, "Call flow not found")
     return score_answers(db, lead, flow, payload.answers)
+
+
+class CallFlowDraftRequest(BaseModel):
+    agent_id: Optional[str] = None
+    brief: str = ""
+    base_flow_id: Optional[str] = None
+    list_type: Optional[str] = None
+    use_call_history: bool = False
+
+
+BRIEF_MIN, BRIEF_MAX = 10, 4000
+
+
+@router.post("/draft")
+def draft_call_flow(payload: CallFlowDraftRequest, db: Session = Depends(get_db), _user=Depends(require_admin)):
+    """Have a scripting agent write (or improve) a call flow. Returns the draft — nothing is saved."""
+    from app.services import script_agent
+    from app.services.agents import AgentError, default_agent
+
+    brief = (payload.brief or "").strip()
+    if len(brief) < BRIEF_MIN:
+        raise HTTPException(400, f"Describe what the script is for in at least {BRIEF_MIN} characters.")
+    if len(brief) > BRIEF_MAX:
+        raise HTTPException(400, f"Keep the brief under {BRIEF_MAX} characters.")
+    list_type = (payload.list_type or "").strip() or None
+    if list_type and list_type not in script_agent.LIST_TYPE_TONE:
+        raise HTTPException(400, f"Unknown list type '{list_type}'.")
+
+    if payload.agent_id:
+        agent = db.get(Agent, payload.agent_id)
+        if agent is None:
+            raise HTTPException(400, "That agent no longer exists.")
+        if agent.kind != "scripting":
+            raise HTTPException(400, f"{agent.name} is a {agent.kind} agent — pick a scripting agent.")
+        if not agent.active:
+            raise HTTPException(400, f"{agent.name} is inactive. Activate it on the Agents page or pick another.")
+    else:
+        agent = default_agent(db, "scripting")
+        if agent is None:
+            raise HTTPException(400, "No active scripting agent. Add one on the Agents page (/agents).")
+
+    base_flow = None
+    if payload.base_flow_id:
+        base_flow = db.get(CallFlow, payload.base_flow_id)
+        if base_flow is None:
+            raise HTTPException(404, "Call flow not found")
+
+    try:
+        result = script_agent.draft(db, agent, brief, base_flow=base_flow, list_type=list_type,
+                                    use_call_history=bool(payload.use_call_history and base_flow))
+    except AgentError as exc:
+        agent.last_error = str(exc)[:500]
+        db.commit()
+        raise HTTPException(502, str(exc))
+    agent.last_used_at = utcnow()
+    agent.last_error = None
+    db.commit()
+    result["agent"] = {"id": agent.id, "name": agent.name}
+    return result
 
 
 

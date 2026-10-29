@@ -11,6 +11,36 @@
   <span id="llm-banner-text"></span>
 </div>
 
+<!-- Scraping agent: an AI agent crawls a public page into scored leads -->
+<div class="card" id="agent-card" style="margin-bottom:16px;">
+  <div class="card-header">
+    <h2>🤖 Scraping agent</h2>
+    <a href="/agents" class="btn btn-sm btn-ghost">Manage agents</a>
+  </div>
+  <div class="card-body">
+  <p class="text-muted" style="margin:0 0 12px; font-size:13px;">Point an AI agent at a public page that lists properties (tax-sale, sheriff-sale or listing pages). It respects robots.txt, follows "next page" links on the same site up to its page limit, extracts only facts shown on the page, and scores each property.</p>
+  <form id="agent-run-form" class="form-stack">
+    <div class="form-group">
+      <label class="form-label" for="agent-select">Agent</label>
+      <select id="agent-select" class="form-input"><option value="">Loading agents…</option></select>
+      <small class="form-hint" id="agent-hint"></small>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="agent-url">Start URL</label>
+      <input type="url" id="agent-url" class="form-input" placeholder="https://county.gov/tax-sale/list" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="agent-goal">Goal (optional)</label>
+      <input type="text" id="agent-goal" class="form-input" maxlength="500" placeholder="e.g. tax-delinquent single-family homes in Wayne County">
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn btn-gold" id="agent-run-btn">Run agent</button>
+      <span id="agent-run-status" class="text-muted" style="font-size:13px;"></span>
+    </div>
+  </form>
+  </div>
+</div>
+
 <!-- Source Directory: pre-configured working sources -->
 <div class="card" style="margin-bottom:16px;">
   <div class="card-header">
@@ -60,6 +90,7 @@
               <option value="county_tax">County Tax / Property Appraiser (HTML)</option>
               <option value="public_api">Public Records API (JSON)</option>
               <option value="html">Generic HTML Page</option>
+              <option value="agent">AI agent (crawls from the URL)</option>
             </select>
           </div>
           <div class="form-group">
@@ -80,6 +111,11 @@
           <label class="form-label">API Key (optional)</label>
           <input type="password" id="source-api-key" class="form-input" placeholder="RentCast API key or other auth token">
           <small class="form-hint">Get a free RentCast API key at <a href="https://app.rentcast.io/api" target="_blank">app.rentcast.io/api</a> (50 calls/mo free)</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="source-agent">Agent (LLM)</label>
+          <select id="source-agent" class="form-input"><option value="">None — built-in parser</option></select>
+          <small class="form-hint">Optional scraping agent that parses and scores this source's data. Required for "AI agent" sources (the default agent is used if none is picked); put the goal in Search Params as {"goal": "…"}.</small>
         </div>
         <div class="form-group">
           <label class="form-label"><input type="checkbox" id="source-auto-scrape"> Auto-scrape daily</label>
@@ -150,14 +186,119 @@
   let currentResults = [];
   let selectedIds = new Set();
 
-  async function api(path, opts = {}) {
-    const r = await fetch(API + path, opts);
+  async function fetchJSON(url, opts = {}) {
+    const r = await fetch(url, opts);
     if (r.status === 401) { window.location.href = '/login'; throw new Error('Not authenticated'); }
     if (!r.ok) {
       const e = await r.json().catch(() => ({ detail: r.statusText }));
-      throw new Error(e.detail || 'Request failed');
+      throw new Error(typeof e.detail === 'string' ? e.detail : 'Request failed');
     }
     return r.json();
+  }
+
+  function api(path, opts = {}) {
+    return fetchJSON(API + path, opts);
+  }
+
+  // ── Scraping agents ───────────────────────────────────────────
+  let scrapingAgents = [];
+
+  function agentLabel(a) {
+    return `${a.name}${a.is_default ? ' (default)' : ''}${a.active ? '' : ' (inactive)'} — ${a.effective_model || a.provider_label}`;
+  }
+
+  function agentOptions(list) {
+    return list.map(a => `<option value="${escHtml(a.id)}">${escHtml(agentLabel(a))}</option>`).join('');
+  }
+
+  async function loadAgents() {
+    const sel = document.getElementById('agent-select');
+    const hint = document.getElementById('agent-hint');
+    const btn = document.getElementById('agent-run-btn');
+    try {
+      scrapingAgents = (await fetchJSON('/api/agents?kind=scraping')) || [];
+    } catch (e) {
+      scrapingAgents = [];
+      hint.textContent = 'Could not load agents: ' + e.message;
+    }
+    const active = scrapingAgents.filter(a => a.active);
+    if (!active.length) {
+      sel.innerHTML = '<option value="">No active scraping agents</option>';
+      sel.disabled = true;
+      btn.disabled = true;
+      hint.innerHTML = 'Add a scraping agent on the <a href="/agents">Agents page</a> to use this.';
+    } else {
+      sel.innerHTML = agentOptions(active);
+      sel.disabled = false;
+      btn.disabled = false;
+      updateAgentHint();
+    }
+    const srcSel = document.getElementById('source-agent');
+    const keep = srcSel.value;
+    srcSel.innerHTML = '<option value="">None — built-in parser</option>' + agentOptions(scrapingAgents);
+    srcSel.value = keep;
+  }
+
+  function updateAgentHint() {
+    const hint = document.getElementById('agent-hint');
+    const a = scrapingAgents.find(x => x.id === document.getElementById('agent-select').value);
+    if (!a) { hint.textContent = ''; return; }
+    const key = a.key_status && a.key_status.ok ? '✓ key OK' : '⚠ ' + ((a.key_status && a.key_status.error) || 'key not configured');
+    const parts = [a.provider_label, a.effective_model || 'model not set', `up to ${a.max_pages || 5} page(s)`, key];
+    if (a.last_error) parts.push('last error: ' + a.last_error);
+    hint.textContent = parts.join(' · ');
+  }
+
+  function agentName(id) {
+    const a = scrapingAgents.find(x => x.id === id);
+    return a ? a.name : 'agent';
+  }
+
+  async function runAgent(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('agent-run-btn');
+    const status = document.getElementById('agent-run-status');
+    const agentId = document.getElementById('agent-select').value;
+    const a = scrapingAgents.find(x => x.id === agentId);
+    const started = Date.now();
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    status.className = 'text-muted';
+    const tick = () => {
+      status.textContent = `Agent is reading pages (up to ${(a && a.max_pages) || 5}) — ${Math.round((Date.now() - started) / 1000)}s…`;
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    try {
+      const job = await api('/agent-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId || null,
+          url: document.getElementById('agent-url').value.trim(),
+          goal: document.getElementById('agent-goal').value.trim() || null,
+        }),
+      });
+      clearInterval(timer);
+      if (job.status === 'failed') {
+        status.className = 'text-danger';
+        status.textContent = 'Failed: ' + (job.error_message || 'Unknown error');
+      } else {
+        status.className = 'text-muted';
+        status.textContent = `Done — ${job.total_found} propert${job.total_found === 1 ? 'y' : 'ies'} found. Review and import below.`;
+      }
+      loadSources();
+      loadJobs();
+      await showResults(job.id);
+      document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      clearInterval(timer);
+      status.className = 'text-danger';
+      status.textContent = 'Failed: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Run agent';
+    loadAgents();
   }
 
   async function checkLLM() {
@@ -170,7 +311,7 @@
         text.textContent = 'LLM is configured — properties will be parsed and analyzed automatically.';
       } else {
         banner.className = 'llm-banner llm-off';
-        text.textContent = 'LLM not configured — using HTML parser and heuristic analysis. Set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL env vars for AI-assisted parsing.';
+        text.textContent = 'No env LLM configured — sources without an agent use the HTML parser and heuristic analysis. Pick a scraping agent (below, or per source) for AI parsing and scoring.';
       }
       banner.style.display = 'flex';
     } catch {}
@@ -242,7 +383,7 @@
           <div class="source-header">
             <div>
               <div class="source-name">${escHtml(s.name)}</div>
-              <div class="source-meta">${escHtml(s.source_type.replace('_',' '))}${s.state ? ' · '+escHtml(s.state) : ''}${s.county ? ' · '+escHtml(s.county) : ''}</div>
+              <div class="source-meta">${s.source_type === 'agent' ? 'AI agent' : escHtml(s.source_type.replace('_',' '))}${s.agent_id ? ' · 🤖 ' + escHtml(agentName(s.agent_id)) : ''}${s.state ? ' · '+escHtml(s.state) : ''}${s.county ? ' · '+escHtml(s.county) : ''}</div>
             </div>
             <div class="source-actions">
               <button class="btn btn-sm btn-gold" onclick="runScrape('${s.id}')" ${!s.active ? 'disabled' : ''}>Scrape</button>
@@ -264,6 +405,7 @@
     document.getElementById('source-form').reset();
     document.getElementById('source-id').value = '';
     document.getElementById('source-type').value = 'rentcast';
+    document.getElementById('source-agent').value = '';
   }
 
   function hideSourceForm() {
@@ -285,6 +427,7 @@
     document.getElementById('source-params').value = s.search_params || '';
     document.getElementById('source-api-key').value = '';
     document.getElementById('source-auto-scrape').checked = !!s.auto_scrape;
+    document.getElementById('source-agent').value = s.agent_id || '';
   }
 
   async function deleteSource(id) {
@@ -312,6 +455,7 @@
       search_params: document.getElementById('source-params').value || null,
       api_key: document.getElementById('source-api-key').value || null,
       auto_scrape: document.getElementById('source-auto-scrape').checked,
+      agent_id: document.getElementById('source-agent').value || null,
     };
     try {
       if (id) {
@@ -436,7 +580,7 @@
                 <strong>${escHtml(addr)}</strong>
                 ${imported} ${absentee} ${llc}
               </div>
-              <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${escHtml(owner)} · ${escHtml(details || '')}</div>
+              <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${escHtml(owner)} · ${escHtml(details || '')}${data.source_url && /^https?:\/\//i.test(data.source_url) ? ` · <a href="${escHtml(data.source_url)}" target="_blank" rel="noopener noreferrer">source page</a>` : ''}</div>
               ${r.llm_analysis ? `<div class="result-analysis" style="margin-top:6px; padding:6px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px;">🤖 ${escHtml(r.llm_analysis)}</div>` : ''}
             </div>
           </div>
@@ -504,10 +648,13 @@
   window.loadDirectory = loadDirectory;
   window.addFromDirectory = addFromDirectory;
 
+  document.getElementById('agent-run-form').addEventListener('submit', runAgent);
+  document.getElementById('agent-select').addEventListener('change', updateAgentHint);
+
   // Init
   checkLLM();
   loadDirectory();
-  loadSources();
+  loadAgents().then(loadSources);
   loadJobs();
 })();
 </script>

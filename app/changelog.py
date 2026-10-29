@@ -19,9 +19,24 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.6.0"
+CURRENT_VERSION = "2.7.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "2.7.0",
+        "date": "2026-10-29",
+        "title": "Agents: AI that calls from your script, scrapes lists, and writes scripts",
+        "sections": {
+            "Added": [
+                "Agents page: add calling, scraping, and script-writing agents. Give each one its own API key, or tag it 'default key' to use the shared key for its provider. Pick a model and add your own instructions. Each kind has a default agent, and a Test button checks the key.",
+                "Default keys (admin): one shared key per provider — Twilio, Bland AI, OpenAI, Anthropic Claude, OpenAI-compatible (Groq, Together, Ollama…). Gemini runs on the app's Google Cloud account and needs no key. Keys are never shown again after saving.",
+                "Calling module: a calling agent places a real phone call through Twilio and speaks the call flow with a Gemini Live voice. The caller can interrupt naturally. The agent hangs up by itself on a wrong number, a stop request, voicemail, or when it's done (it never leaves messages). Answering machines are detected and hung up on. You get the recording, transcript, Hot/Warm/Cold score, and 'Listen live' with both voices. Bland AI remains available as a provider, using the agent's own key or the default.",
+                "Choose the calling agent on AI Test Call and in the lead's '🤖 AI call' window. Calls to owners still require every number check (owner match, consent, 8 am–9 pm, not DNC) and are logged on the lead afterward.",
+                "Scraping agents: point one at a web page (county tax-sale list, sheriff sale, listings), describe what you're after, and it reads the page and follows the next pages (up to its page limit). It pulls each property with its owner, amounts owed, and motivated-seller signals, scores it 0–100, and shows the results in the Scraper for import. It respects robots.txt and crawl delays. Saved sources can use an agent too ('AI agent' source type, or an agent to read any HTML source).",
+                "Script-writing agents: '✨ Write with agent' drafts a new call flow from a short brief and list type. '✨ Improve' rewrites an existing flow using its call history (questions sellers often leave unanswered, outcome and score mix). Drafts open in the editor and keep the compliance rules — nothing is saved until you click Create.",
+            ],
+        },
+    },
     {
         "version": "2.6.0",
         "date": "2026-10-29",

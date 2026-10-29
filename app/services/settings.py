@@ -286,7 +286,22 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "SMTP_FROM",
         "description": "Sender email address for outbound email (contracts, templates).",
     },
-    # ── LLM / Scraper ──────────────────────────────────────────────
+    # ── Default keys for agents (used by agents tagged "default key") ────
+    "openai_api_key": {
+        "label": "OpenAI API Key (agents default)",
+        "category": "agents",
+        "is_secret": True,
+        "env": "OPENAI_API_KEY",
+        "description": "Default key for OpenAI agents tagged 'default key'.",
+    },
+    "anthropic_api_key": {
+        "label": "Anthropic (Claude) API Key (agents default)",
+        "category": "agents",
+        "is_secret": True,
+        "env": "ANTHROPIC_API_KEY",
+        "description": "Default key for Claude agents tagged 'default key'.",
+    },
+    # ── LLM / Scraper (also the default key for OpenAI-compatible agents) ──
     "llm_api_key": {
         "label": "LLM API Key",
         "category": "llm",

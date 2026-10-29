@@ -26,8 +26,11 @@ PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project)}"
 REGION="${REGION:-us-central1}"
 SERVICE_NAME="dre-capital"
 SESSION_SECRET="dre-capital-secret-key"
-# Optional API keys kept in Secret Manager: ENV_VAR=secret-name
-OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key GOOGLE_MAPS_API_KEY=dre-capital-maps-api-key"
+# Optional API keys kept in Secret Manager: ENV_VAR=secret-name (uploaded only when exported).
+# TWILIO_* / OPENAI_API_KEY are the default keys for agents tagged "default key". Claude's
+# default key is set on the Agents page (not here, so a developer's own ANTHROPIC_API_KEY
+# in the shell never ends up in production).
+OPTIONAL_SECRETS="QUO_API_KEY=dre-capital-quo-api-key BLAND_API_KEY=dre-capital-bland-api-key GOOGLE_MAPS_API_KEY=dre-capital-maps-api-key TWILIO_ACCOUNT_SID=dre-capital-twilio-account-sid TWILIO_AUTH_TOKEN=dre-capital-twilio-auth-token TWILIO_FROM_NUMBER=dre-capital-twilio-from-number OPENAI_API_KEY=dre-capital-openai-api-key"
 
 echo "=== DRE-Capital GCP Deployment ==="
 echo "Project:  $PROJECT_ID"

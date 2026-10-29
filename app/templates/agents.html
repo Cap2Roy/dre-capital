@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Agents{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🤖 Agents</div>
+    <div class="page-subtitle">AI agents that call sellers from your script, scrape property lists, and write call scripts. Give each its own API key, or tag it <span class="badge badge-info">default key</span> to use the shared one.</div>
+  </div>
+  <div class="flex gap-2">
+    <button class="btn btn-gold" onclick="editAgent(null)">+ Add agent</button>
+  </div>
+</div>
+
+<div id="agents-list"><div class="empty-state">Loading agents…</div></div>
+
+<div class="card mt-4" id="defaults-card">
+  <div class="card-header">🔑 Default keys <span class="text-sm text-muted" style="font-weight:normal">— used by every agent tagged "default key"</span></div>
+  <div class="card-body" id="defaults-body"><div class="empty-state text-sm">Loading…</div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+const ME = "{{ current_user.id if current_user else '' }}";
+const KIND_INFO = {
+  calling: { icon: "📞", title: "Calling agents", blurb: "Dial a number and run a call flow by voice. Calls to a lead's number only go through after the number passes every check (owner match, consent, calling hours…)." },
+  scraping: { icon: "🕸", title: "Scraping agents", blurb: "Read a website (county lists, listings), follow next pages, and pull properties with motivated-seller signals into the Scraper." },
+  scripting: { icon: "✍️", title: "Script-writing agents", blurb: "Draft new call flows or improve existing ones from your brief and past call results (Settings → Call Flows)." },
+};
+let META = null, AGENTS = [], FLOWS = [];
+
+async function load() {
+  [META, AGENTS, FLOWS] = await Promise.all([
+    META ? META : API.get("/api/agents/providers"), API.get("/api/agents"), API.get("/api/call-flows?active=true").catch(() => []),
+  ]);
+  renderAgents();
+  loadDefaults();
+}
+
+function keyTag(a) {
+  if (a.use_default_key) return '<span class="badge badge-info">default key</span>';
+  return a.has_own_key || a.provider === "gemini" ? '<span class="badge badge-neutral">own key</span>' : '<span class="badge badge-warning">no key</span>';
+}
+
+function renderAgents() {
+  const el = document.getElementById("agents-list");
+  el.innerHTML = META.kinds.map(kind => {
+    const info = KIND_INFO[kind];
+    const list = AGENTS.filter(a => a.kind === kind);
+    const rows = list.map(a => `
+      <tr>
+        <td><strong>${escHtml(a.name)}</strong> ${a.is_default ? '<span class="badge badge-gold">default</span>' : ""} ${a.active ? "" : '<span class="badge badge-neutral">inactive</span>'}
+          ${a.instructions ? `<div class="text-xs text-muted" style="max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(a.instructions)}</div>` : ""}</td>
+        <td class="text-sm">${escHtml(a.provider_label)}<div class="text-xs text-muted">${escHtml(a.effective_model || "")}${a.voice ? " · voice " + escHtml(a.voice) : ""}</div></td>
+        <td>${keyTag(a)} ${a.key_status.ok ? '<span class="badge badge-success">✓ ready</span>' : `<span class="badge badge-danger" title="${escHtml(a.key_status.error || "")}">✗ key missing</span>`}</td>
+        <td class="text-xs text-muted">${a.last_used_at ? "Used " + fmtDateTime(a.last_used_at) : "Never used"}${a.last_error ? `<div class="text-danger">${escHtml(a.last_error.slice(0, 120))}</div>` : ""}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-outline btn-sm" onclick="testAgent('${a.id}', this)">Test</button>
+          <button class="btn btn-outline btn-sm" onclick="editAgent('${a.id}')">Edit</button>
+          <button class="btn btn-outline btn-sm" style="color:var(--danger)" onclick="deleteAgent('${a.id}')">Delete</button>
+        </td>
+      </tr>`).join("");
+    return `<div class="card mb-4">
+      <div class="card-header">${info.icon} ${info.title} <button class="btn btn-outline btn-sm" onclick="editAgent(null, '${kind}')">+ Add</button></div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">${info.blurb}</p>
+        ${list.length ? `<table class="data-table"><thead><tr><th>Agent</th><th>Provider</th><th>Key</th><th>Activity</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          : '<div class="empty-state text-sm">No agents yet.</div>'}
+      </div></div>`;
+  }).join("");
+}
+
+function providerOptions(kind, selected) {
+  return Object.entries(META.providers).filter(([, p]) => p.kinds.includes(kind))
+    .map(([id, p]) => `<option value="${id}" ${id === selected ? "selected" : ""}>${escHtml(p.label)}</option>`).join("");
+}
+
+function editAgent(id, kindHint) {
+  const a = id ? AGENTS.find(x => x.id === id) : { kind: kindHint || "calling", use_default_key: true, active: true, max_pages: 5 };
+  const kind = a.kind;
+  const firstProvider = a.provider || Object.entries(META.providers).find(([, p]) => p.kinds.includes(kind))[0];
+  const html = `
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Name</label><input id="ag-name" class="form-input" value="${escHtml(a.name || "")}" placeholder="e.g. Sam — DFW sellers"></div>
+      <div class="form-group"><label class="form-label">Type</label>
+        <select id="ag-kind" class="form-select" ${id ? "disabled" : ""}>${META.kinds.map(k => `<option value="${k}" ${k === kind ? "selected" : ""}>${KIND_INFO[k].icon} ${KIND_INFO[k].title.replace(" agents", "")}</option>`).join("")}</select></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Provider</label><select id="ag-provider" class="form-select">${providerOptions(kind, firstProvider)}</select>
+        <div class="form-hint" id="ag-provider-help"></div></div>
+      <div class="form-group"><label class="form-label">Model <span class="text-muted">(optional)</span></label><input id="ag-model" class="form-input" value="${escHtml(a.model || "")}"></div>
+    </div>
+    <div class="form-group">
+      <label class="text-sm"><input type="checkbox" id="ag-default-key" ${a.use_default_key ? "checked" : ""}> Tag <span class="badge badge-info">default key</span> — use the shared default key for this provider</label>
+    </div>
+    <div id="ag-key-fields"></div>
+    <div id="ag-kind-fields"></div>
+    <div class="form-group"><label class="form-label">Instructions <span class="text-muted">(optional)</span></label>
+      <textarea id="ag-instructions" class="form-textarea" rows="4" placeholder="${kind === "calling" ? "Extra guidance for the call, e.g. 'Speak slowly; many owners are elderly.'" : kind === "scraping" ? "What to look for, e.g. 'Only single-family homes; capture delinquent tax amounts.'" : "House style, e.g. 'Warm, plain English; max 8 questions.'"}">${escHtml(a.instructions || "")}</textarea></div>
+    <div class="flex gap-4" style="flex-wrap:wrap">
+      <label class="text-sm"><input type="checkbox" id="ag-is-default" ${a.is_default ? "checked" : ""}> Default ${escHtml(kind)} agent</label>
+      <label class="text-sm"><input type="checkbox" id="ag-active" ${a.active !== false ? "checked" : ""}> Active</label>
+    </div>`;
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveAgent('${id || ""}')">${id ? "Save" : "Add agent"}</button>`;
+  openModal(id ? "Edit agent" : "Add agent", html, footer, { wide: true });
+  const sync = () => renderAgentFields(a, document.getElementById("ag-kind").value);
+  document.getElementById("ag-kind").addEventListener("change", (e) => {
+    document.getElementById("ag-provider").innerHTML = providerOptions(e.target.value, null); sync();
+  });
+  document.getElementById("ag-provider").addEventListener("change", sync);
+  document.getElementById("ag-default-key").addEventListener("change", sync);
+  sync();
+}
+
+function renderAgentFields(a, kind) {
+  const provider = document.getElementById("ag-provider").value;
+  const p = META.providers[provider];
+  const useDefault = document.getElementById("ag-default-key").checked;
+  document.getElementById("ag-provider-help").textContent = p.help + (p.default_model ? ` · Default model: ${p.default_model}` : "");
+  const same = a.provider === provider;
+  const field = (id, label, value, type = "text", ph = "") => `<div class="form-group"><label class="form-label">${label}</label>
+      <input id="${id}" type="${type}" class="form-input" autocomplete="off" value="${escHtml(value || "")}" placeholder="${escHtml(ph)}"></div>`;
+  let keys = "";
+  if (!p.fields.length) keys = '<div class="form-hint mb-4">No key needed — runs on this app\'s Google Cloud account.</div>';
+  else if (useDefault) keys = '<div class="form-hint mb-4">Uses the default key below (Default keys).</div>';
+  else {
+    keys = '<div class="grid-2">';
+    if (p.fields.includes("account_sid")) keys += field("ag-sid", "Twilio Account SID", same ? a.account_sid : "", "text", "AC…");
+    if (p.fields.includes("api_key")) keys += field("ag-key", p.key_label, same && a.has_own_key ? "••••" : "", "password", "Paste key");
+    if (p.fields.includes("from_number")) keys += field("ag-from", "Twilio phone number (caller ID)", same ? a.from_number : "", "text", "+12145551234");
+    if (p.fields.includes("base_url")) keys += field("ag-base", "Base URL", same ? a.base_url : "", "text", "https://api.groq.com/openai/v1");
+    keys += "</div>";
+  }
+  document.getElementById("ag-key-fields").innerHTML = keys;
+  let extra = "";
+  if (kind === "calling") {
+    const voices = provider === "twilio_gemini" ? META.gemini_voices : [];
+    extra = `<div class="grid-2">
+      <div class="form-group"><label class="form-label">Call flow (script)</label><select id="ag-flow" class="form-select">
+        <option value="">Default call flow</option>${FLOWS.map(f => `<option value="${f.id}" ${f.id === a.call_flow_id ? "selected" : ""}>${escHtml(f.name)}</option>`).join("")}</select></div>
+      <div class="form-group"><label class="form-label">Voice</label>${voices.length
+        ? `<select id="ag-voice" class="form-select"><option value="">Default</option>${voices.map(v => `<option ${v === a.voice ? "selected" : ""}>${escHtml(v)}</option>`).join("")}</select>`
+        : `<input id="ag-voice" class="form-input" value="${escHtml(a.voice || "")}" placeholder="Bland voice name (blank = default)">`}</div></div>`;
+  } else if (kind === "scraping") {
+    extra = `<div class="form-group"><label class="form-label">Max pages per run</label><input id="ag-pages" type="number" min="1" max="25" class="form-input" value="${a.max_pages || 5}" style="max-width:140px"></div>`;
+  }
+  document.getElementById("ag-kind-fields").innerHTML = extra;
+}
+
+async function saveAgent(id) {
+  const v = (x) => { const el = document.getElementById(x); return el ? el.value : undefined; };
+  const kind = v("ag-kind");
+  const body = {
+    name: v("ag-name").trim(), provider: v("ag-provider"), model: v("ag-model").trim() || null,
+    use_default_key: document.getElementById("ag-default-key").checked,
+    instructions: v("ag-instructions"), is_default: document.getElementById("ag-is-default").checked,
+    active: document.getElementById("ag-active").checked,
+  };
+  if (v("ag-key") !== undefined && v("ag-key") !== "") body.api_key = v("ag-key");
+  if (v("ag-sid") !== undefined) body.account_sid = v("ag-sid");
+  if (v("ag-from") !== undefined) body.from_number = v("ag-from");
+  if (v("ag-base") !== undefined) body.base_url = v("ag-base");
+  if (kind === "calling") { body.call_flow_id = v("ag-flow") || null; body.voice = v("ag-voice") || null; }
+  if (kind === "scraping") body.max_pages = parseInt(v("ag-pages"), 10) || 5;
+  if (!body.name) { toast("Give the agent a name.", "error"); return; }
+  try {
+    if (id) await API.patch(`/api/agents/${id}`, body);
+    else await API.post("/api/agents", { ...body, kind });
+    closeModal(); toast(id ? "Agent saved" : "Agent added", "success"); load();
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+async function testAgent(id, btn) {
+  btn.disabled = true; btn.textContent = "Testing…";
+  try {
+    const r = await API.post(`/api/agents/${id}/test`);
+    toast((r.ok ? "✓ " : "✗ ") + r.detail, r.ok ? "success" : "error");
+  } catch (e) { toast(e.message, "error"); }
+  load();
+}
+
+async function deleteAgent(id) {
+  const a = AGENTS.find(x => x.id === id);
+  if (!a || !confirm(`Delete agent "${a.name}"?`)) return;
+  try { await API.delete(`/api/agents/${id}`); load(); } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+// ── Default keys (admin) ──
+const DEFAULT_FIELDS = {
+  twilio_gemini: [["account_sid", "Twilio Account SID", "text"], ["api_key", "Twilio Auth Token", "password"], ["from_number", "Twilio phone number", "text"]],
+  bland: [["api_key", "Bland API Key", "password"]],
+  openai: [["api_key", "OpenAI API Key", "password"]],
+  anthropic: [["api_key", "Anthropic API Key", "password"]],
+  openai_compatible: [["api_key", "API Key", "password"], ["base_url", "Base URL", "text"]],
+};
+
+async function loadDefaults() {
+  const d = await API.get("/api/agents/defaults");
+  const body = document.getElementById("defaults-body");
+  body.innerHTML = `<table class="data-table"><thead><tr><th>Provider</th><th>Status</th>${IS_ADMIN ? "<th>Set / replace</th>" : ""}</tr></thead><tbody>` +
+    Object.entries(d).map(([p, s]) => `<tr>
+      <td>${escHtml(s.label)}</td>
+      <td>${p === "gemini" ? '<span class="badge badge-success">✓ This app\'s Google Cloud</span>'
+          : s.set ? `<span class="badge badge-success">✓ Set</span>${s.from_number ? " " + escHtml(s.from_number) : ""}` : '<span class="badge badge-warning">Not set</span>'}</td>
+      ${IS_ADMIN ? `<td>${(DEFAULT_FIELDS[p] || []).map(([f, label, type]) =>
+          `<input class="form-input dk" data-p="${p}" data-f="${f}" type="${type}" autocomplete="off" placeholder="${escHtml(label)}${type === "password" && s.set ? " (set — leave blank to keep)" : ""}" style="margin:2px 0;max-width:340px">`).join("") || '<span class="text-muted text-sm">No key needed</span>'}</td>` : ""}
+    </tr>`).join("") + `</tbody></table>` +
+    (IS_ADMIN ? '<button class="btn btn-primary mt-4" onclick="saveDefaults()">Save default keys</button>' : '<div class="form-hint mt-2">Only admins can change default keys.</div>');
+}
+
+async function saveDefaults() {
+  const payload = {};
+  document.querySelectorAll(".dk").forEach(i => {
+    if (i.value.trim()) (payload[i.dataset.p] = payload[i.dataset.p] || {})[i.dataset.f] = i.value.trim();
+  });
+  try {
+    const r = await API.put("/api/agents/defaults", payload);
+    toast(r.updated.length ? `Saved: ${r.updated.join(", ")}` : "Nothing to change", "success"); load();
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+load();
+</script>
+{% endblock %}
