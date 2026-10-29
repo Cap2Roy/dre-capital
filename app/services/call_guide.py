@@ -52,6 +52,7 @@ _LIST_LABELS = {
     ListType.ABSENTEE_OWNER: "Absentee owner",
     ListType.TIRED_LANDLORD: "Tired landlord",
     ListType.VACANT_CODE_VIOLATION: "Vacant / code violation",
+    ListType.GOVERNMENT_SALE: "Government sale / REO",
 }
 
 _PLACEHOLDER = re.compile(r"\[([^\[\]]+)\]")

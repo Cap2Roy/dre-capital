@@ -81,7 +81,7 @@ def get_call_guide(
     from app.services.call_guide import build_call_guide
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     flow = None
     if flow_id:
         flow = db.get(CallFlow, flow_id)
@@ -96,7 +96,7 @@ def score_call(payload: CallScoreRequest, db: Session = Depends(get_db), _user=D
     from app.services.call_guide import score_answers
     lead = db.get(Lead, payload.lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     flow = db.get(CallFlow, payload.flow_id) if payload.flow_id else db.execute(
         select(CallFlow).where(CallFlow.is_default == True).limit(1)  # noqa: E712
     ).scalars().first()

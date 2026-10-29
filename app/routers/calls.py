@@ -97,7 +97,7 @@ def start_call(payload: CallInitiateRequest, request: Request, db: Session = Dep
         raise HTTPException(404, "Phone not found")
     lead = db.get(Lead, phone.lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     if not is_callable(phone):
         raise HTTPException(403, "Phone is DNC-flagged or opted out. Mail only.")
     user = getattr(request.state, "user", None)

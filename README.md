@@ -19,6 +19,7 @@ The platform encodes the manual's daily loop end-to-end:
 | **Make the call** | Compliant **click-to-call** via **Quo** (opens the Quo app; results sync back) or Twilio — manual-dial only, no autodialer. **Guided calls**: the call flow is adapted to each property — known facts per question, how to ask it, answers from earlier calls pre-filled, live **Hot/Warm/Cold** scoring, script quick-exits (not interested / Do Not Call). Auto-logs + schedules follow-ups. **No-answer quick-click** fires a follow-up SMS and returns the next lead. **Editable call flows** in Settings → Call Flows; seeds a default "DFW Qualification — Sam for Eylon" flow. |
 | **Text the owner** | SMS through **Quo** (when Quo is your calling provider — same number you call from) or Twilio — template CRUD, manual send, inbound logging, **STOP-keyword auto opt-out** for DNC compliance (Quo via signed webhook, Twilio via `/api/messages/inbound`). |
 | **Rehearse with AI** | **Talk to Sam live** (Google **Gemini Live on Vertex AI**): a real-time voice agent runs your call flow in the browser — you play the seller over your mic, interrupt freely, watch the live transcript, then get the recording, transcript, and an automatic Hot/Warm/Cold score. Uses the app's Google Cloud service account (no API key). Optional **phone test call** via Bland AI (needs a Bland key; lead numbers blocked — AI-voice calls to sellers need prior written consent). |
+| **Real property data** | **Properties** (formerly Leads) with edit / archive / restore / delete. Government sale sources (Treasury, IRS, USDA, FDIC, Tarrant County constable tax sales) on a daily Cloud Scheduler scan with automatic import. **Scan property** researches one property across public records, sheriff sales, RentCast and optional paid APIs (ATTOM, Regrid, BatchData, PropertyRadar, RealEstateAPI, Realie — Settings → Property data sources), every fact with its source. |
 | **Agents** | **Agents page** (`/agents`): add **calling**, **scraping**, and **script-writing** agents. Each gets its own API key or the **default key** tag (shared per-provider keys set by an admin). **Calling module:** Twilio dials and the call is bridged to **Grok Voice** (xAI; μ-law straight through) or **Gemini Live** (μ-law ⇄ PCM) — Twilio + Grok Voice is the default. Agents authenticate with a dedicated **Twilio API key**; admins buy numbers per agent or verify an existing number (e.g. the Quo line) as caller ID, and callbacks to agent numbers forward to the Quo line. **Quo Sona** is the Quo option: Quo's AI agent calls from your Quo number (OAuth "Connect Quo" to Quo's MCP server; the flow is condensed into Sona's task). The agent speaks the call flow, handles interruptions, hangs up itself (`end_call` tool: wrong number / stop / voicemail / done), and skips answering machines; you get the recording, transcript, score, and live listen. **Bland AI** is the alternative provider. **Scraping agents** crawl a site within robots.txt (next pages, up to a limit), extract and score properties with an LLM (**Grok** / Gemini / OpenAI / Claude / OpenAI-compatible) — long lists are read in parallel sections so no rows are dropped, and sale date, case number, lender and amount owed are captured — and feed the Scraper. With an xAI key, **Grok Scout** (grok-4.20-non-reasoning) and **Grok Script Writer** (grok-4.7) are created as the default agents. **Script-writing agents** draft or improve call flows from a brief and call history. |
 | **Lock & hand off** | Contract generation — **seller purchase agreement** + **buyer assignment agreement**, fill-from-lead, honest email send (raises if SMTP unconfigured). Buy-box buyer matching — top 5 first. |
 | **Source buyers** | Buyer sourcing channels (`network | title_partner | meetup | marketplace | referral`) + **title-company partnership** tracking (referrals, coverage, fees) via TitleCompany partners. |
@@ -89,11 +90,7 @@ The script:
    variables you export change (e.g. `GOOGLE_CLIENT_ID`, `RENTCAST_API_KEY`,
    `TWILIO_*`, `CALLING_PROVIDER`); everything else keeps its current value
 
-**Storage caveat:** the database is SQLite inside the container. It's recreated (with
-demo data) on every deploy/restart, so leads, calls, and *personal* Quo keys saved in the
-UI don't survive a redeploy. The session key and company Quo key do (Secret Manager).
-Moving to Cloud SQL Postgres (`DATABASE_URL=postgresql+psycopg2://…`) makes everything
-persistent; the code already supports it.
+**Database:** Cloud SQL **PostgreSQL 16** (`dre-capital-db`, private IP only — the org policy forbids public IPs — reached from Cloud Run over Direct VPC egress with TLS). The deploy script creates the database, the app user, and the connection-URL secret (`dre-capital-database-url`) on first run; daily backups are kept 7 days. Data survives deploys. On start the app creates missing tables and adds new columns / enum values (`app/database.py: upgrade_schema`). Production never seeds demo properties — only users, call flows, templates, and settings. Local dev still uses SQLite with demo data (`python -m app.seed`).
 
 On start the app re-registers its Quo webhooks (`/api/calls/quo-webhook`, HMAC-verified)
 so call results, AI summaries, transcripts, and STOP replies sync automatically.
@@ -118,10 +115,16 @@ All endpoints under `/api/`. Key routes:
 GET  /api/health                  — health check
 GET  /api/dashboard               — pipeline stats
 GET  /api/dashboard/queue          — today's call queue (stack-sorted)
-GET  /api/leads                   — list/filter/sort leads
+GET  /api/leads                   — list/filter/sort properties (?archived=true for the archive)
 POST /api/leads                   — create lead
 GET  /api/leads/{id}              — full lead detail
-PATCH /api/leads/{id}             — update status/notes
+PATCH /api/leads/{id}             — edit property / owner fields, status, notes
+POST /api/leads/{id}/archive      — archive (hide from lists, queue, dashboard; re-scans keep it archived)
+POST /api/leads/{id}/restore      — restore from the archive
+DELETE /api/leads/{id}            — permanently delete an archived property (not if it has contracts)
+POST /api/leads/{id}/scan         — Scan property: research facts with sources (Grok web search, sheriff sales, RentCast, enabled databases)
+GET  /api/leads/{id}/scans        — scan history
+GET  /api/property-sources        — research sources + key status; PUT (admin) to enable / set keys; POST /{id}/test
 POST /api/leads/{id}/followups    — schedule follow-up
 POST /api/leads/{id}/valuation    — compute ARV + repairs + MAO
 POST /api/import/csv              — upload county CSV
@@ -159,6 +162,9 @@ POST /api/agents/twilio/caller-ids — verify an existing number as caller ID (T
 GET  /api/agents/quo/connect      — Connect Quo (OAuth 2.1 + PKCE to Quo's MCP server) for Sona calls (admin)
 GET  /api/agents/quo/status       — Quo connection + Quo numbers
 POST /api/scraper/agent-run       — scraping agent crawls {url, goal?} (robots.txt respected) → scored results
+POST /api/scraper/government/ensure     — add the government sale sources (also done at startup)
+POST /api/scraper/government/import-new — import new government-sale results into Properties
+POST /api/scraper/auto/cron       — daily scan + government import (Cloud Scheduler; X-Cron-Token)
 POST /api/call-flows/draft        — script-writing agent drafts a new flow or improves one (not saved; admin)
 WS   /api/live-agent/ws           — live agent call: mic PCM16 16 kHz in, agent PCM16 24 kHz + JSON events out
 GET  /api/live-agent/status       — Gemini Live readiness (project, model, voice, voices)
@@ -219,6 +225,8 @@ dre-capital/
 │   │   ├── phone_agent.py    — calling module: Twilio dial + media stream ⇄ Grok Voice / Gemini Live
 │   │   ├── twilio_numbers.py — buy / verify agent numbers, inbound forwarding to the Quo line
 │   │   ├── quo_sona.py       — Quo Sona calls: OAuth to Quo's MCP server, start/poll/cancel agent calls
+│   │   ├── gov_sources.py    — Treasury / IRS / USDA / FDIC / Tarrant constable sale scrapers + bulk import
+│   │   ├── property_scan.py  — Scan property: Grok web research, sheriff sales, RentCast, paid property APIs
 │   │   ├── scraping_agent.py — robots-aware crawl + LLM extraction and scoring
 │   │   ├── script_agent.py   — call-flow drafting from a brief + call history
 │   │   ├── buyers.py         — buy-box matching

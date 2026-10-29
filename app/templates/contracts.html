@@ -41,7 +41,7 @@ async function loadContracts() {
       body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">✎</div>No contracts yet. Get a verbal yes, then create one from the lead detail page.</div></td></tr>';
     } else {
       body.innerHTML = contracts.map(c => `<tr>
-        <td class="font-semi"><a href="/leads/${c.lead_id}">${escHtml(c.property_address) || "View lead →"}</a></td>
+        <td class="font-semi"><a href="/properties/${c.lead_id}">${escHtml(c.property_address) || "View property →"}</a></td>
         <td class="col-num font-semi">${fmtMoney(c.contract_price)}</td>
         <td class="col-num">${fmtMoney(c.assignment_fee)}</td>
         <td class="col-num">${c.buyer_price ? fmtMoney(c.buyer_price) : "—"}</td>

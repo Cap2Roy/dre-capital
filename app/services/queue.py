@@ -39,6 +39,7 @@ def get_next_lead_to_dial(
     immediately without a second round-trip.
     """
     q = select(Lead).where(
+        Lead.archived_at.is_(None),
         Lead.status.notin_([
             LeadStatus.DEAD,
             LeadStatus.UNDER_CONTRACT,

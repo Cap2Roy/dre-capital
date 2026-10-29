@@ -57,12 +57,16 @@ LIST_TYPE_TONE: dict[str, str] = {
     ListType.VACANT_CODE_VIOLATION.value: (
         "Vacant / code violation: the property may be a liability (fines, vandalism). Be helpful and direct — "
         "condition, open violations or fines, utilities, and access for a walkthrough."),
+    ListType.GOVERNMENT_SALE.value: (
+        "Government sale / REO (HUD, Treasury, USDA, federal auctions): the seller is an agency, so calls usually go "
+        "to the listing broker or the occupant, not the agency. Be businesslike — sale date, bidding rules, "
+        "occupancy, condition, and whether the property is still available."),
 }
 
 LIST_TYPE_LABELS = {
     "pre_foreclosure": "Pre-foreclosure", "tax_delinquent": "Tax delinquent", "probate": "Probate",
     "divorce": "Divorce", "absentee_owner": "Absentee owner", "tired_landlord": "Tired landlord",
-    "vacant_code_violation": "Vacant / code violation",
+    "vacant_code_violation": "Vacant / code violation", "government_sale": "Government sale / REO",
 }
 
 COMPLIANCE_RULES = (

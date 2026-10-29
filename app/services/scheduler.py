@@ -9,6 +9,7 @@ common case for this single-instance deployment.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 from datetime import datetime
 from typing import Optional
@@ -76,8 +77,16 @@ def run_daily_auto_scrape(db=None) -> dict:
                 db.commit()
                 failed += 1
             ran += 1
-        log.info("Auto-scrape: ran=%d succeeded=%d failed=%d", ran, succeeded, failed)
-        return {"ran": ran, "succeeded": succeeded, "failed": failed}
+        # Government sales go straight into Properties (dedup + archive-aware import).
+        imported = skipped = 0
+        try:
+            from app.services.gov_sources import import_all_new
+            res = import_all_new(db)
+            imported, skipped = res.get("imported", 0), res.get("skipped", 0)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Government import after auto-scrape failed: %s", exc)
+        log.info("Auto-scrape: ran=%d succeeded=%d failed=%d imported=%d", ran, succeeded, failed, imported)
+        return {"ran": ran, "succeeded": succeeded, "failed": failed, "imported": imported, "skipped": skipped}
     finally:
         if own:
             db.close()
@@ -103,7 +112,9 @@ async def scheduler_loop() -> None:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Meeting reminder check failed: %s", exc)
 
-                if not _auto_scrape_enabled(db):
+                # On Cloud Run the daily scan is triggered by Cloud Scheduler (CRON_TOKEN set):
+                # background CPU is throttled outside requests, so this loop only does it locally.
+                if os.environ.get("CRON_TOKEN") or not _auto_scrape_enabled(db):
                     continue
                 # Deliberate exception to the naive-UTC rule: ``auto_scrape_hour``
                 # is a wall-clock LOCAL hour and ``last_auto_scrape_date`` is a
@@ -122,7 +133,8 @@ async def scheduler_loop() -> None:
                 if now.hour < target_hour:
                     continue
                 log.info("Starting daily auto-scrape at %s", now.isoformat())
-                run_daily_auto_scrape(db)
+                # A full scan takes minutes (Treasury alone ~3) — never block the event loop.
+                await asyncio.to_thread(run_daily_auto_scrape)
                 last_run_date = today_key
                 set_setting(db, "last_auto_scrape_date", today_key)
                 db.commit()

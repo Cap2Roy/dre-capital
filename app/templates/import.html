@@ -24,6 +24,7 @@
             <option value="absentee_owner">Absentee Owner</option>
             <option value="tired_landlord">Tired Landlord</option>
             <option value="vacant_code_violation">Vacant / Code Violation</option>
+            <option value="government_sale">Government Sale / REO</option>
           </select></div>
         <div class="form-group"><label class="form-label">State</label>
           <input class="form-input" id="imp-state" value="TX"></div>
@@ -115,7 +116,7 @@ async function uploadCSV() {
 async function recomputeStacks() {
   try {
     const r = await API.post("/api/import/recompute-stacks");
-    toast(`${r.updated} leads re-stacked`, "success");
+    toast(`${r.updated} properties re-stacked`, "success");
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 loadLists();

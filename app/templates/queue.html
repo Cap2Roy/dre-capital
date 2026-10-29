@@ -34,7 +34,7 @@
 async function loadQueue() {
   try {
     const data = await API.get("/api/dashboard/queue");
-    document.getElementById("queue-count").textContent = data.count + " leads";
+    document.getElementById("queue-count").textContent = data.count + (data.count === 1 ? " property" : " properties");
     const body = document.getElementById("queue-body");
     if (data.queue.length === 0) {
       body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">✓</div>No callable leads. Import more lists or skip trace pending leads.</div></td></tr>';
@@ -43,7 +43,7 @@ async function loadQueue() {
         <td class="col-mono">${i + 1}</td>
         <td>${stackBadge(l.stack_depth)}</td>
         <td>${tierLabel(l.stack_depth)}</td>
-        <td onclick="location.href='/leads/${l.id}'" style="cursor:pointer">
+        <td onclick="location.href='/properties/${l.id}'" style="cursor:pointer">
           <div class="font-semi">${escHtml(l.address)}</div>
           <div class="text-xs text-muted">${fmtCityState(l.city, l.state)}</div></td>
         <td>${escHtml(l.owner)}</td>
@@ -51,7 +51,7 @@ async function loadQueue() {
         <td>${statusBadge(l.status)}</td>
         <td class="col-mono">${l.call_count}</td>
         <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger" : "text-muted"}">${fmtDate(l.next_followup)}</td>
-        <td><a href="/leads/${l.id}" class="btn btn-primary btn-sm">Open →</a></td>
+        <td><a href="/properties/${l.id}" class="btn btn-primary btn-sm">Open →</a></td>
       </tr>`).join("");
     }
   } catch (e) { toast("Error: " + e.message, "error"); }

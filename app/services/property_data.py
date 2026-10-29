@@ -219,12 +219,15 @@ def apply_listing(rec: PropertyRecord, x: Optional[dict]) -> None:
     rec.longitude = rec.longitude or x.get("longitude")
 
 
-def enrich(db: Session, lead: Lead) -> PropertyRecord:
+def enrich(db: Session, lead: Lead, raw: Optional[dict] = None) -> PropertyRecord:
     """Refresh a lead's property data from RentCast (up to 3 requests).
 
     Partial results are kept: e.g. a property with public records but no AVM
     still gets its tax data. Raises only when nothing could be fetched.
+    ``raw`` (optional) receives the provider responses under "property", "avm"
+    and "listing" — the property scan turns them into sourced facts.
     """
+    raw = {} if raw is None else raw
     rec = _record(db, lead)
     address = full_address(lead)
     errors: list[str] = []
@@ -233,7 +236,8 @@ def enrich(db: Session, lead: Lead) -> PropertyRecord:
     try:
         records = _rentcast(db, "/properties", {"address": address})
         if records:
-            apply_property_record(rec, records[0] if isinstance(records, list) else records)
+            raw["property"] = records[0] if isinstance(records, list) else records
+            apply_property_record(rec, raw["property"])
             got_any = True
     except PropertyDataError as exc:
         errors.append(str(exc))
@@ -244,6 +248,7 @@ def enrich(db: Session, lead: Lead) -> PropertyRecord:
 
     try:
         avm = _rentcast(db, "/avm/value", {"address": address, "compCount": 5})
+        raw["avm"] = avm
         if avm and avm.get("price"):
             rec.est_value = float(avm["price"])
             rec.est_value_low = avm.get("priceRangeLow")
@@ -260,7 +265,8 @@ def enrich(db: Session, lead: Lead) -> PropertyRecord:
 
     try:
         listings = _rentcast(db, "/listings/sale", {"address": address, "limit": 1})
-        apply_listing(rec, listings[0] if listings else None)
+        raw["listing"] = listings[0] if listings else None
+        apply_listing(rec, raw["listing"])
         got_any = got_any or bool(listings)
     except PropertyDataError as exc:
         errors.append(str(exc))

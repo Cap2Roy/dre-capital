@@ -1,12 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Leads{% endblock %}
+{% block title %}Properties{% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">Leads</div>
-    <div class="page-subtitle">All properties. Sorted by stack depth — call deepest first.</div>
+    <div class="page-title">Properties</div>
+    <div class="page-subtitle">Every property and its owner. Sorted by stack depth — call deepest first.</div>
   </div>
-  <button class="btn btn-primary" onclick="addLeadModal()">+ Add Lead</button>
+  <button class="btn btn-primary" onclick="addLeadModal()">+ Add Property</button>
+</div>
+
+<div class="tabs mb-4" style="display:flex;gap:6px">
+  <button class="btn btn-sm btn-primary" id="tab-active" onclick="setView(false)">Active</button>
+  <button class="btn btn-sm btn-outline" id="tab-archived" onclick="setView(true)">🗄 Archived</button>
 </div>
 
 <div class="toolbar">
@@ -18,9 +23,7 @@
     <option value="assigned">Assigned</option><option value="closed">Closed</option>
     <option value="dead">Dead</option>
   </select>
-  <select class="form-select" id="filter-state" style="width:auto">
-    <option value="">All States</option><option value="MI">MI</option><option value="TX">TX</option>
-  </select>
+  <input class="form-input" id="filter-state" placeholder="State (e.g. TX)" maxlength="2" style="width:120px">
   <select class="form-select" id="filter-stack" style="width:auto">
     <option value="">All Stacks</option>
     <option value="3">3+ (Today)</option><option value="2">2+ (This week)</option>
@@ -37,14 +40,10 @@
   <div class="table-wrap">
     <table class="data-table" id="leads-table">
       <thead>
-        <tr>
-          <th>Stack</th><th>Address</th><th>Owner</th><th>City</th>
-          <th>Beds</th><th>Sqft</th><th>Assessed</th><th>Status</th>
-          <th>Next Follow-up</th><th>Calls</th>
-        </tr>
+        <tr id="leads-head"></tr>
       </thead>
       <tbody id="leads-body">
-        <tr><td colspan="10"><div class="empty-state">Loading leads…</div></td></tr>
+        <tr><td colspan="11"><div class="empty-state">Loading properties…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -54,31 +53,56 @@
 
 {% block scripts %}
 <script>
-let curPage = 1;
+let curPage = 1, archivedView = false, _rows = {};
 const pageSize = 25;
+
+function setView(archived) {
+  archivedView = archived; curPage = 1;
+  document.getElementById("tab-active").className = "btn btn-sm " + (archived ? "btn-outline" : "btn-primary");
+  document.getElementById("tab-archived").className = "btn btn-sm " + (archived ? "btn-primary" : "btn-outline");
+  document.getElementById("sort").disabled = archived;
+  loadLeads();
+}
 
 async function loadLeads() {
   const q = document.getElementById("search").value;
   const status = document.getElementById("filter-status").value;
-  const state = document.getElementById("filter-state").value;
+  const state = document.getElementById("filter-state").value.trim();
   const minStack = document.getElementById("filter-stack").value;
   const sort = document.getElementById("sort").value;
   const params = new URLSearchParams({ page: curPage, page_size: pageSize, sort });
   if (q) params.set("q", q);
   if (status) params.set("status", status);
-  if (state) params.set("state", state);
+  if (state.length === 2) params.set("state", state);
   if (minStack) params.set("min_stack", minStack);
+  if (archivedView) params.set("archived", "true");
 
+  document.getElementById("leads-head").innerHTML = archivedView
+    ? "<th>Address</th><th>Owner</th><th>City</th><th>Status</th><th>Archived</th><th>Reason</th><th></th>"
+    : "<th>Stack</th><th>Address</th><th>Owner</th><th>City</th><th>Beds</th><th>Sqft</th><th>Assessed</th><th>Status</th><th>Next Follow-up</th><th>Calls</th><th></th>";
   try {
     const data = await API.get("/api/leads?" + params);
     const body = document.getElementById("leads-body");
+    _rows = Object.fromEntries(data.leads.map(l => [l.id, l]));
     if (data.leads.length === 0) {
-      body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">⌂</div>No leads match your filters.</div></td></tr>';
+      body.innerHTML = `<tr><td colspan="11"><div class="empty-state"><div class="icon">${archivedView ? "🗄" : "⌂"}</div>${archivedView ? "No archived properties." : "No properties match your filters."}</div></td></tr>`;
+    } else if (archivedView) {
+      body.innerHTML = data.leads.map(l => `<tr>
+        <td><a href="/properties/${l.id}" class="font-semi">${escHtml(l.property_address)}</a><div class="text-xs text-muted">${escHtml(l.property_zip || "")}</div></td>
+        <td>${escHtml(l.owner_name)}</td>
+        <td>${fmtCityState(l.property_city, l.property_state) || "—"}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td class="text-sm text-muted">${fmtDate(l.archived_at)}</td>
+        <td class="text-sm">${escHtml(l.archive_reason || "—")}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-outline btn-sm" onclick="restoreRow('${l.id}')">↩ Restore</button>
+          <button class="btn btn-outline btn-sm" style="color:var(--danger)" onclick="deleteRow('${l.id}')">Delete</button>
+        </td></tr>`).join("");
     } else {
-      body.innerHTML = data.leads.map(l => `<tr onclick="location.href='/leads/${l.id}'">
+      body.innerHTML = data.leads.map(l => `<tr onclick="location.href='/properties/${l.id}'">
         <td>${stackBadge(l.stack_depth)}</td>
         <td><div class="font-semi">${escHtml(l.property_address)}</div>
-          <div class="text-xs text-muted">${escHtml(l.property_zip)} ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""} ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}</div></td>
+          <div class="text-xs text-muted">${escHtml(l.property_zip || "")} ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""} ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}</div></td>
         <td>${escHtml(l.owner_name)}</td>
         <td>${fmtCityState(l.property_city, l.property_state) || "—"}</td>
         <td>${l.beds || "—"}</td>
@@ -87,25 +111,37 @@ async function loadLeads() {
         <td>${statusBadge(l.status)}</td>
         <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger font-semi" : "text-muted"}">${fmtDate(l.next_followup)}</td>
         <td class="col-mono">${(l.calls || []).length}</td>
+        <td style="white-space:nowrap" onclick="event.stopPropagation()">
+          <button class="btn btn-outline btn-sm" title="Edit" onclick="editRow('${l.id}')">✎</button>
+          <button class="btn btn-outline btn-sm" title="Archive" onclick="archiveRow('${l.id}')">🗄</button>
+        </td>
       </tr>`).join("");
     }
     const totalPages = Math.ceil(data.total / pageSize);
     document.getElementById("pager").innerHTML = `
-      <span class="text-sm text-muted">${data.total} leads</span>
+      <span class="text-sm text-muted">${data.total} ${archivedView ? "archived " : ""}${data.total === 1 ? "property" : "properties"}</span>
       <div class="flex gap-2">
         <button class="btn btn-outline btn-sm" ${curPage <= 1 ? "disabled" : ""} onclick="curPage--; loadLeads()">← Prev</button>
         <span class="text-sm text-muted" style="padding:4px 8px">Page ${curPage} of ${totalPages || 1}</span>
         <button class="btn btn-outline btn-sm" ${curPage >= totalPages ? "disabled" : ""} onclick="curPage++; loadLeads()">Next →</button>
       </div>`;
-  } catch (e) { toast("Error: " + e.message, "error"); }
+  } catch (e) { toast("Error: " + e.message.replace(/^\d+\s*/, ""), "error"); }
 }
+
+function editRow(id) { editPropertyModal(_rows[id], loadLeads); }
+function archiveRow(id) { archiveProperty(_rows[id], loadLeads); }
+async function restoreRow(id) {
+  try { await API.post(`/api/leads/${id}/restore`); toast("Property restored", "success"); loadLeads(); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+function deleteRow(id) { deleteProperty(_rows[id], loadLeads); }
 
 function addLeadModal() {
   const html = `
     <div class="form-group"><label class="form-label">Property Address *</label><input class="form-input" id="nl-addr" placeholder="123 Main St"></div>
     <div class="grid-2">
       <div class="form-group"><label class="form-label">City</label><input class="form-input" id="nl-city"></div>
-      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="nl-state" value="TX"></div>
+      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="nl-state" value="TX" maxlength="2"></div>
     </div>
     <div class="form-group"><label class="form-label">ZIP</label><input class="form-input" id="nl-zip"></div>
     <div class="form-group"><label class="form-label">Owner Name</label><input class="form-input" id="nl-owner"></div>
@@ -121,16 +157,16 @@ function addLeadModal() {
       <option value="cosmetic_plus">Cosmetic + Kitchen/Baths</option>
       <option value="gut">Full Gut / Structural</option>
     </select></div>`;
-  const footer = `<button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-    <button class="btn btn-primary" onclick="submitNewLead()">Save Lead</button>`;
-  openModal("Add Lead", html, footer);
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitNewLead()">Save Property</button>`;
+  openModal("Add Property", html, footer);
 }
 
 async function submitNewLead() {
   const body = {
     property_address: document.getElementById("nl-addr").value,
     property_city: document.getElementById("nl-city").value || null,
-    property_state: document.getElementById("nl-state").value || null,
+    property_state: document.getElementById("nl-state").value.trim().toUpperCase() || null,
     property_zip: document.getElementById("nl-zip").value || null,
     owner_name: document.getElementById("nl-owner").value || "",
     owner_email: document.getElementById("nl-email").value.trim() || null,
@@ -142,10 +178,10 @@ async function submitNewLead() {
   if (!body.property_address) { toast("Address required", "error"); return; }
   try {
     await API.post("/api/leads", body);
-    document.querySelector(".modal-overlay").remove();
-    toast("Lead added", "success");
+    closeModal();
+    toast("Property added", "success");
     loadLeads();
-  } catch (e) { toast("Error: " + e.message, "error"); }
+  } catch (e) { toast("Error: " + e.message.replace(/^\d+\s*/, ""), "error"); }
 }
 
 let searchTimer;
@@ -153,9 +189,13 @@ document.getElementById("search").addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { curPage = 1; loadLeads(); }, 300);
 });
-["filter-status", "filter-state", "filter-stack", "sort"].forEach(id =>
+document.getElementById("filter-state").addEventListener("input", (e) => {
+  const v = e.target.value.trim();
+  if (v.length === 0 || v.length === 2) { curPage = 1; loadLeads(); }
+});
+["filter-status", "filter-stack", "sort"].forEach(id =>
   document.getElementById(id).addEventListener("change", () => { curPage = 1; loadLeads(); }));
 
-loadLeads();
+if (new URLSearchParams(location.search).get("view") === "archived") setView(true); else setView(false);
 </script>
 {% endblock %}

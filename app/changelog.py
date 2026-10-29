@@ -19,9 +19,31 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "2.9.0"
+CURRENT_VERSION = "3.0.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.0.0",
+        "date": "2026-10-29",
+        "title": "Real data: Properties, government sale scans, Scan property, a permanent database",
+        "sections": {
+            "Added": [
+                "Permanent database: production now runs on Cloud SQL PostgreSQL (private network, daily backups) — properties, calls, and settings survive deploys. Demo data is gone; production holds only real properties.",
+                "Government sale sources on the daily scan: U.S. Treasury seized real property, IRS seized real estate, USDA Rural Development / FSA, FDIC failed-bank listings (found via USA.gov's real-estate sales directory), and Tarrant County TX Constable Pct 3 delinquent tax sales. Each property carries its sale date, sale/case/account number, minimum bid or list price, and a link to its listing. New results are added to Properties automatically after each daily scan (archived ones stay archived). HUD Home Store and GSA real-estate sales can't be scanned — their sites forbid automated access.",
+                "Scan property: a '🔎 Scan property' button on every property researches it from the county assessor and tax records, sales history, sheriff/foreclosure sales (official county lists), and listing sites — every fact with its source link and a check that the cited page really says it. Uses Grok web search, RentCast, and any data provider you enable.",
+                "Settings → Property data sources: turn research sources on or off and add keys for ATTOM, Regrid, BatchData, PropertyRadar, RealEstateAPI, and Realie; each has a Test button. Choose the Grok model used for research.",
+                "Edit, archive, and delete properties: edit any property and owner detail; archive a property (with a reason) to hide it from Properties, the call queue, and the dashboard; restore it or delete it permanently from 🗄 Archived. Properties with contracts can only be archived.",
+                "New list type: Government sale / REO.",
+            ],
+            "Changed": [
+                "Leads are now called Properties (menu, pages, and links — old /leads links still work).",
+                "The daily scan runs on a schedule managed by Google Cloud (06:00 Central) so it no longer depends on the app being busy, and a long scan can't slow the app down.",
+            ],
+            "Fixed": [
+                "Signing in works on any HTTPS deployment regardless of database type.",
+            ],
+        },
+    },
     {
         "version": "2.9.0",
         "date": "2026-10-29",

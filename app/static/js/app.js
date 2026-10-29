@@ -204,6 +204,7 @@ document.addEventListener("DOMContentLoaded", () => {
 const LIST_LABELS = {
   pre_foreclosure: "Pre-foreclosure", tax_delinquent: "Tax delinquent", probate: "Probate", divorce: "Divorce",
   absentee_owner: "Absentee", tired_landlord: "Tired landlord", vacant_code_violation: "Vacant / code",
+  government_sale: "Gov. sale / REO",
 };
 
 function renderPropertyBrief(b, opts = {}) {
@@ -275,5 +276,145 @@ async function refreshPropertyData(leadId, btn) {
   } catch (e) {
     toast("Couldn't refresh: " + e.message.replace(/^\d+\s*/, ""), "error");
     if (btn) { btn.disabled = false; btn.textContent = "↻ Refresh property data"; }
+  }
+}
+
+// ── Properties: edit / archive / delete (shared by the Properties list and property page) ──
+function editPropertyModal(p, onSaved) {
+  const f = (id, label, value, type = "text", extra = "") => `<div class="form-group"><label class="form-label">${label}</label>
+    <input class="form-input" id="${id}" type="${type}" value="${escHtml(value == null ? "" : String(value))}" ${extra}></div>`;
+  const html = `
+    <h4 class="mb-2">Property</h4>
+    ${f("ep-addr", "Address *", p.property_address)}
+    <div class="grid-2">${f("ep-city", "City", p.property_city)}${f("ep-state", "State", p.property_state, "text", 'maxlength="2"')}</div>
+    <div class="grid-2">${f("ep-zip", "ZIP", p.property_zip)}${f("ep-year", "Year built", p.year_built, "number")}</div>
+    <div class="grid-2">${f("ep-beds", "Beds", p.beds, "number")}${f("ep-baths", "Baths", p.baths, "number", 'step="0.5"')}</div>
+    <div class="grid-2">${f("ep-sqft", "Sqft", p.sqft, "number")}${f("ep-assessed", "Assessed value", p.assessed_value, "number")}</div>
+    ${f("ep-taxes", "Taxes owed", p.taxes_owed, "number")}
+    <h4 class="mb-2 mt-4">Owner</h4>
+    ${f("ep-owner", "Owner name", p.owner_name)}
+    <label class="text-sm"><input type="checkbox" id="ep-llc" ${p.owner_is_llc ? "checked" : ""}> Owner is an LLC / company / trust</label>
+    ${f("ep-email", "Owner email", p.owner_email, "email")}
+    ${f("ep-mail", "Mailing address", p.mailing_address)}
+    <div class="grid-2">${f("ep-mcity", "Mailing city", p.mailing_city)}${f("ep-mstate", "Mailing state", p.mailing_state, "text", 'maxlength="2"')}</div>
+    ${f("ep-mzip", "Mailing ZIP", p.mailing_zip)}`;
+  const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="ep-save">Save changes</button>`;
+  openModal("Edit property", html, footer, { wide: true });
+  document.getElementById("ep-save").addEventListener("click", async () => {
+    const v = (id) => document.getElementById(id).value.trim();
+    const num = (id, int) => { const x = v(id); if (x === "") return null; const n = int ? parseInt(x, 10) : parseFloat(x); return isNaN(n) ? null : n; };
+    const body = {
+      property_address: v("ep-addr"), property_city: v("ep-city"), property_state: v("ep-state"), property_zip: v("ep-zip"),
+      year_built: num("ep-year", true), beds: num("ep-beds", true), baths: num("ep-baths"), sqft: num("ep-sqft", true),
+      assessed_value: num("ep-assessed"), taxes_owed: num("ep-taxes"),
+      owner_name: v("ep-owner"), owner_is_llc: document.getElementById("ep-llc").checked, owner_email: v("ep-email"),
+      mailing_address: v("ep-mail"), mailing_city: v("ep-mcity"), mailing_state: v("ep-mstate"), mailing_zip: v("ep-mzip"),
+    };
+    if (!body.property_address) { toast("The address can't be empty.", "error"); return; }
+    try {
+      const saved = await API.patch(`/api/leads/${p.id}`, body);
+      closeModal(); toast("Property saved", "success"); if (onSaved) onSaved(saved);
+    } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  });
+}
+
+function archiveProperty(p, onDone) {
+  const html = `<p class="text-sm">Archive <strong>${escHtml(p.property_address)}</strong>? It leaves Properties, the call queue and the dashboard, and new scans won't bring it back. You can restore it from 🗄 Archived.</p>
+    <div class="form-group mt-4"><label class="form-label">Reason <span class="text-muted">(optional)</span></label>
+      <select class="form-select" id="ar-reason"><option value="">—</option><option>Not a fit</option><option>Sold / no longer available</option>
+        <option>Duplicate</option><option>Bad data</option><option>Owner not interested</option><option>Other</option></select></div>`;
+  openModal("Archive property", html, `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="ar-go">🗄 Archive</button>`);
+  document.getElementById("ar-go").addEventListener("click", async () => {
+    try {
+      await API.post(`/api/leads/${p.id}/archive`, { reason: document.getElementById("ar-reason").value || null });
+      closeModal(); toast("Property archived", "success"); if (onDone) onDone();
+    } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  });
+}
+
+async function deleteProperty(p, onDone) {
+  if (!confirm(`Permanently delete ${p.property_address}? Its phones, calls and notes are removed. This can't be undone.`)) return;
+  try { await API.delete(`/api/leads/${p.id}`); toast("Property deleted", "success"); if (onDone) onDone(); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+// ── Scan property: sourced findings from Grok web research, RentCast and paid property APIs ──
+// Server: POST /api/leads/{id}/scan, GET /api/leads/{id}/scans (latest first). Every fact carries
+// its source + link; Grok facts are re-read on the cited page ("check").
+const SCAN_CHECK = {
+  confirmed: ["badge-success", "✓ on page", "We re-read the cited page and found this value."],
+  not_found: ["badge-warning", "⚠ not on page", "We re-read the cited page and did not find this value — treat with care."],
+  unchecked: ["badge-neutral", "not re-checked", "The site doesn't let our bot read the page; open the link to confirm."],
+  api: ["badge-info", "data API", "Structured data from the provider's API."],
+};
+const SCAN_STATUS = { done: "badge-success", partial: "badge-warning", failed: "badge-danger", running: "badge-info", interrupted: "badge-danger" };
+
+function _scanLink(url, text) {
+  return /^https?:\/\//i.test(url || "")
+    ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer">${escHtml(text)}</a>`
+    : escHtml(text);
+}
+
+function renderPropertyScan(scan) {
+  if (!scan) return `<div class="text-sm text-muted">Not scanned yet.</div>`;
+  const secs = scan.duration_ms != null ? ` · ${Math.round(scan.duration_ms / 1000)} s` : "";
+  const cost = scan.cost_usd ? ` · $${Number(scan.cost_usd).toFixed(3)}` : "";
+  const head = `<div class="flex items-center gap-2 text-sm">
+      <span class="badge ${SCAN_STATUS[scan.status] || "badge-neutral"}">${escHtml(scan.status)}</span>
+      <span class="text-muted">Scanned ${fmtDateTime(scan.created_at)}${secs}${cost}</span></div>`;
+  const sources = (scan.sources || []).map(s => {
+    const cls = s.status === "ok" ? "badge-success" : s.status === "error" ? "badge-danger" : "badge-neutral";
+    const bits = [s.status === "ok" ? `${s.facts} facts` : s.status, s.latency_ms != null ? `${Math.round(s.latency_ms / 1000)} s` : "",
+      s.cost_usd ? `$${Number(s.cost_usd).toFixed(3)}` : "", s.model || ""].filter(Boolean).join(" · ");
+    const why = s.error || s.note;
+    return `<div class="text-xs"><span class="badge ${cls}">${escHtml(s.name)}</span> <span class="text-muted">${escHtml(bits)}</span>${why ? ` <span class="${s.error ? "text-danger" : "text-muted"}">— ${escHtml(why)}</span>` : ""}</div>`;
+  }).join("");
+  const grok = (scan.sources || []).find(s => s.id === "grok") || {};
+  const dropped = Object.values(grok.dropped || {}).reduce((a, b) => a + b, 0);
+  // Distress facts lead: the AI summary is web research only and can miss what a county list shows.
+  const distress = (scan.facts || []).filter(f => f.category === "distress" && f.check !== "not_found");
+  const alerts = distress.length ? `<div class="pb-sec">${distress.map(f => `<div class="text-sm"><span class="badge ${f.official && f.check === "confirmed" ? "badge-danger" : "badge-warning"}">⚠ ${escHtml(f.label)}</span>
+      ${escHtml(f.value)} <span class="text-xs text-muted">— ${_scanLink(f.source_url, f.source_name || f.source)}</span></div>`).join("")}</div>` : "";
+  const summary = scan.summary ? `<div class="pb-sec text-sm"><span class="pb-k">Grok summary</span> ${escHtml(scan.summary)}
+      <div class="text-xs text-muted">AI summary of the web research only — rely on the sourced facts below.</div></div>` : "";
+  const applied = (scan.applied || []).length
+    ? `<div class="pb-sec text-xs">Filled empty lead fields: ${scan.applied.map(a => `${escHtml(a.field)} = <strong>${escHtml(a.value)}</strong> (${_scanLink(a.source_url, a.source)})`).join(", ")}</div>` : "";
+  const groups = (scan.groups || []).map(g => {
+    const rows = g.fields.map(e => e.values.map((f, i) => {
+      const chk = SCAN_CHECK[f.check] || SCAN_CHECK.unchecked;
+      const label = i === 0
+        ? `<td rowspan="${e.values.length}" style="vertical-align:top">${escHtml(e.label)}${e.conflict ? ` <span class="badge badge-warning" title="Sources disagree — compare side by side">⚠ differs</span>` : ""}</td>` : "";
+      const official = f.official ? ` <span class="badge badge-gold" title="Official government / appraisal-district site">official</span>` : "";
+      return `<tr${e.conflict ? ' style="background:rgba(234,179,8,.08)"' : ""}>${label}
+        <td title="${escHtml(f.quote || "")}"><strong>${escHtml(f.value)}</strong>${f.as_of ? ` <span class="text-xs text-muted">(${escHtml(f.as_of)})</span>` : ""}</td>
+        <td class="text-xs">${_scanLink(f.source_url, f.source_name || f.source)}${official}</td>
+        <td class="text-xs"><span class="badge ${chk[0]}" title="${escHtml(f.check_note || chk[2])}">${chk[1]}</span></td></tr>`;
+    }).join("")).join("");
+    return `<div class="pb-sec"><div class="pb-k">${escHtml(g.label)}${g.conflicts ? ` <span class="badge badge-warning">${g.conflicts} conflict${g.conflicts > 1 ? "s" : ""}</span>` : ""}</div>
+      <div class="table-wrap"><table class="data-table" style="table-layout:fixed;width:100%"><colgroup><col style="width:20%"><col style="width:44%"><col style="width:22%"><col style="width:14%"></colgroup>
+        <thead><tr><th>Field</th><th>Value</th><th>Source</th><th>Check</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
+  const checked = (grok.checked || []).length
+    ? `<div class="pb-sec text-xs text-muted">Searched, nothing found (not proof of absence): ${grok.checked.map(escHtml).join("; ")}</div>` : "";
+  const droppedNote = dropped ? `<div class="text-xs text-muted">${dropped} unsourced or unverifiable Grok fact${dropped > 1 ? "s were" : " was"} discarded.</div>` : "";
+  const empty = !(scan.facts || []).length && scan.status !== "running" ? `<div class="text-sm text-muted pb-sec">No facts found for this address.</div>` : "";
+  return `<div class="property-scan">${head}<div class="pb-sec">${sources}</div>${alerts}${summary}${applied}${groups}${empty}${checked}${droppedNote}</div>`;
+}
+
+/** Run a scan (takes ~30–60 s); calls onPropertyScanned(scan) when the page defines it. */
+async function runPropertyScan(leadId, btn) {
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Scanning… (about a minute)"; }
+  try {
+    const scan = await API.post(`/api/leads/${encodeURIComponent(leadId)}/scan`);
+    toast(scan.status === "failed" ? "Scan failed — see sources" : `Scan complete: ${(scan.facts || []).length} facts`, scan.status === "failed" ? "error" : "success");
+    if (typeof onPropertyScanned === "function") onPropertyScanned(scan);
+    return scan;
+  } catch (e) {
+    toast("Scan failed: " + e.message.replace(/^\d+\s*/, ""), "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }

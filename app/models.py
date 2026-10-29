@@ -67,6 +67,8 @@ class ListType(str, enum.Enum):
     ABSENTEE_OWNER = "absentee_owner"
     TIRED_LANDLORD = "tired_landlord"
     VACANT_CODE_VIOLATION = "vacant_code_violation"
+    # Federal / government-owned property sales (Treasury, USDA REO, FDIC, IRS acquired property).
+    GOVERNMENT_SALE = "government_sale"
 
 
 class PhoneQuality(str, enum.Enum):
@@ -191,6 +193,10 @@ class Lead(TimestampMixin, Base):
     ai_call_consent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     ai_call_consent_source: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ai_call_consent_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
+    # Archive: hidden from Properties, the call queue, and the dashboard; restorable.
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    archived_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
+    archive_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Relations
     list_memberships: Mapped[list["LeadListMembership"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     phones: Mapped[list["Phone"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
@@ -669,3 +675,26 @@ class Meeting(TimestampMixin, Base):
     reminder_minutes: Mapped[int] = mapped_column(Integer, default=60)
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     lead: Mapped[Optional["Lead"]] = relationship(back_populates="meetings")
+
+
+class PropertyScan(TimestampMixin, Base):
+    """One "Scan property" run: sourced facts about a lead's property from several data sources.
+
+    ``facts`` is a JSON list — every fact carries its source name, link, and how it was
+    checked; ``sources`` is a JSON list of per-source outcomes (status, error, latency,
+    cost).  ``applied`` lists the empty lead fields filled from authoritative facts.
+    Rows go with their lead (``ON DELETE CASCADE``).
+    """
+    __tablename__ = "property_scans"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    lead_id: Mapped[str] = mapped_column(String(32), ForeignKey("leads.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running | done | partial | failed
+    address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    sources: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # JSON list
+    facts: Mapped[Optional[str]] = mapped_column(Text, nullable=True)     # JSON list
+    applied: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # JSON list
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

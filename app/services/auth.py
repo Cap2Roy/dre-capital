@@ -104,7 +104,7 @@ def set_session_cookie(response, user_id: str) -> None:
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=not settings.is_sqlite,  # HTTPS in prod, HTTP in dev
+        secure=settings.app_base_url.startswith("https://"),  # HTTPS in prod, HTTP in local dev
     )
 
 

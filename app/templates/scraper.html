@@ -45,7 +45,11 @@
 <div class="card" style="margin-bottom:16px;">
   <div class="card-header">
     <h2>📋 Source Directory</h2>
-    <button class="btn btn-sm btn-ghost" onclick="loadDirectory()">Refresh</button>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button class="btn btn-sm btn-ghost" onclick="addGovSources()" title="Treasury, IRS, USDA, FDIC and Tarrant County sale sources — added with daily auto-scrape on">+ Government sale sources</button>
+      <button class="btn btn-sm btn-ghost" onclick="importGovNew()" title="Import every not-yet-imported property from each government source's latest scrape">Import new government results</button>
+      <button class="btn btn-sm btn-ghost" onclick="loadDirectory()">Refresh</button>
+    </div>
   </div>
   <div id="directory-list">
     <p class="text-muted">Loading available sources…</p>
@@ -91,6 +95,11 @@
               <option value="public_api">Public Records API (JSON)</option>
               <option value="html">Generic HTML Page</option>
               <option value="agent">AI agent (crawls from the URL)</option>
+              <option value="gov_treasury">Gov: Treasury seized real property</option>
+              <option value="gov_irs">Gov: IRS auctions (real estate)</option>
+              <option value="gov_usda">Gov: USDA RD/FSA properties</option>
+              <option value="gov_fdic">Gov: FDIC failed-bank real estate</option>
+              <option value="gov_tarrant">Gov: Tarrant County Constable Pct 3 tax sales</option>
             </select>
           </div>
           <div class="form-group">
@@ -166,6 +175,7 @@
         <option value="absentee_owner">Absentee Owner</option>
         <option value="tired_landlord">Tired Landlord</option>
         <option value="vacant_code_violation">Vacant / Code Violation</option>
+        <option value="government_sale">Government Sale / REO</option>
       </select>
     </div>
     <div class="form-group">
@@ -567,6 +577,16 @@
           data.year_built ? 'built ' + data.year_built : null,
           data.assessed_value ? '$' + Number(data.assessed_value).toLocaleString() : null,
         ].filter(Boolean).join(' · ');
+        const money = v => (v || v === 0) && !isNaN(Number(v)) ? '$' + Number(v).toLocaleString() : null;
+        const sale = [
+          data.program,
+          data.sale_date ? 'sale ' + data.sale_date + (data.sale_time ? ' ' + data.sale_time : '') : null,
+          data.case_number ? '#' + data.case_number : null,
+          data.listing_status && !data._listing ? data.listing_status : null,
+          data.minimum_bid ? 'min bid ' + money(data.minimum_bid) : null,
+          data.list_price && !data._listing ? 'price ' + money(data.list_price) : null,
+          data.amount_owed ? 'owed ' + money(data.amount_owed) : null,
+        ].filter(Boolean).join(' · ');
         const imported = r.imported ? '<span class="badge badge-ok">Imported</span>' : '';
         const absentee = data.owner_occupied === false ? '<span class="badge badge-warn">Absentee</span>' : '';
         const llc = data.owner_is_llc ? '<span class="badge badge-muted">LLC</span>' : '';
@@ -581,6 +601,7 @@
                 ${imported} ${absentee} ${llc}
               </div>
               <div class="result-meta" style="font-size:13px; color:var(--text-muted);">Owner: ${escHtml(owner)} · ${escHtml(details || '')}${data.source_url && /^https?:\/\//i.test(data.source_url) ? ` · <a href="${escHtml(data.source_url)}" target="_blank" rel="noopener noreferrer">source page</a>` : ''}</div>
+              ${sale ? `<div class="result-meta" style="font-size:12px; color:var(--text-muted); margin-top:2px;">${escHtml(sale)}</div>` : ''}
               ${r.llm_analysis ? `<div class="result-analysis" style="margin-top:6px; padding:6px; background:rgba(0,0,0,0.03); border-radius:4px; font-size:12px;">🤖 ${escHtml(r.llm_analysis)}</div>` : ''}
             </div>
           </div>
@@ -602,6 +623,15 @@
       return;
     }
     document.getElementById('import-count').textContent = `${selectedIds.size} property(ies) will be imported as leads.`;
+    // Government sources tag each record with its list type — preselect it when the selection agrees.
+    const types = new Set(currentResults.filter(r => selectedIds.has(r.id)).map(r => {
+      try { return JSON.parse(r.property_data).list_type || ''; } catch { return ''; }
+    }));
+    const sel = document.getElementById('import-list-type');
+    if (types.size === 1) {
+      const [t] = types;
+      if (t && [...sel.options].some(o => o.value === t)) sel.value = t;
+    }
     document.getElementById('import-dialog').style.display = '';
   }
 
@@ -622,7 +652,7 @@
         body: JSON.stringify({ result_ids: [...selectedIds], list_type: listType, list_name: listName }),
       });
       hideImportDialog();
-      alert(`Imported ${result.imported} leads, skipped ${result.skipped} duplicates.`);
+      alert(`Imported ${result.imported} properties, skipped ${result.skipped} duplicates.`);
       selectedIds.clear();
       showResults(currentJobId);
       loadJobs();
@@ -631,6 +661,33 @@
     }
     btn.disabled = false;
     btn.textContent = 'Import';
+  }
+
+  async function addGovSources() {
+    try {
+      const res = await api('/government/ensure', { method: 'POST' });
+      alert(res.created.length ? `Added: ${res.created.join(', ')}` : 'All government sale sources are already added.');
+      loadSources();
+    } catch (e) {
+      alert('Could not add government sources: ' + e.message);
+    }
+  }
+
+  async function importGovNew() {
+    if (!confirm('Import every not-yet-imported property from the latest scrape of each government source?')) return;
+    try {
+      const res = await api('/government/import-new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const lines = res.sources.map(s => `${s.source}: ${s.job_id ? `${s.imported} imported, ${s.skipped} skipped` : 'no completed scrape yet'}`);
+      alert(`Imported ${res.imported}, skipped ${res.skipped}.\n\n${lines.join('\n')}`);
+      loadJobs();
+      if (currentJobId) showResults(currentJobId);
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    }
   }
 
   // Expose to inline handlers
@@ -647,6 +704,8 @@
   window.loadJobs = loadJobs;
   window.loadDirectory = loadDirectory;
   window.addFromDirectory = addFromDirectory;
+  window.addGovSources = addGovSources;
+  window.importGovNew = importGovNew;
 
   document.getElementById('agent-run-form').addEventListener('submit', runAgent);
   document.getElementById('agent-select').addEventListener('change', updateAgentHint);

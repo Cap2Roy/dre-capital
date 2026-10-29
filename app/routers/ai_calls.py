@@ -119,7 +119,7 @@ def start_test_call(payload: AiCallCreate, request: Request, db: Session = Depen
     if lead is None and payload.lead_id:
         lead = db.get(Lead, payload.lead_id)
         if lead is None:
-            raise HTTPException(404, "Lead not found")
+            raise HTTPException(404, "Property not found")
 
     agent = None
     if payload.agent_id:

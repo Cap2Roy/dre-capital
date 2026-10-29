@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Lead Detail{% endblock %}
+{% block title %}Property{% endblock %}
 {% block content %}
-<div id="lead-detail"><div class="empty-state"><div class="icon">⌂</div>Loading lead…</div></div>
+<div id="lead-detail"><div class="empty-state"><div class="icon">⌂</div>Loading property…</div></div>
 {% endblock %}
 
 {% block scripts %}
@@ -19,9 +19,23 @@ async function loadLead() {
     _lead = lead;
     _brief = brief;
     document.getElementById("lead-detail").innerHTML = renderLead(lead, timeline, brief);
+    loadLatestScan();
   } catch (e) {
     document.getElementById("lead-detail").innerHTML = `<div class="empty-state"><div class="icon">⚠</div>${escHtml(e.message)}</div>`;
   }
+}
+
+// ── Scan property: research from public records, sheriff sales, RentCast + enabled databases ──
+let _scan = null;
+function onPropertyScanned(scan) {
+  _scan = scan || null;
+  const box = document.getElementById("scan-box");
+  if (box) box.innerHTML = _scan ? renderPropertyScan(_scan)
+    : '<div class="text-sm text-muted">Not scanned yet. Scan pulls the assessor record, tax status, sales history, foreclosure / sheriff-sale notices and listing status — each fact with its source.</div>';
+}
+async function loadLatestScan() {
+  try { const scans = await API.get(`/api/leads/${LEAD_ID}/scans?limit=1`); onPropertyScanned(scans[0]); }
+  catch (e) { onPropertyScanned(null); }
 }
 
 const PROVIDER_LABELS = { quo: "Quo", twilio: "Twilio", "dry-run": "Dry-run" };
@@ -31,10 +45,20 @@ function scoreBadge(s) {
   return `<span class="badge ${map[s][0]}">${map[s][1]}</span>`;
 }
 
+async function restoreThis() {
+  try { await API.post(`/api/leads/${LEAD_ID}/restore`); toast("Property restored", "success"); loadLead(); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
 function renderLead(l, tl, brief) {
   const valuation = l.valuations[0];   // newest first
   const contract = l.contracts[0];
   return `
+  ${l.archived_at ? `<div class="gc-context mb-4" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span>🗄 Archived ${fmtDate(l.archived_at)}${l.archive_reason ? " — " + escHtml(l.archive_reason) : ""}. Hidden from Properties, the queue, and the dashboard.</span>
+      <button class="btn btn-outline btn-sm" onclick="restoreThis()">↩ Restore</button>
+      <button class="btn btn-outline btn-sm" style="color:var(--danger)" onclick="deleteProperty(_lead, () => location.href='/properties?view=archived')">Delete permanently</button>
+    </div>` : ""}
   <div class="page-header">
     <div>
       <div class="flex items-center gap-3">
@@ -46,8 +70,10 @@ function renderLead(l, tl, brief) {
       <div class="page-title mt-4">${escHtml(l.property_address)}</div>
       <div class="page-subtitle">${fmtCityState(l.property_city, l.property_state)} ${escHtml(l.property_zip || "")}</div>
     </div>
-    <div class="flex gap-2">
-      <a href="/queue" class="btn btn-outline">← Back to Queue</a>
+    <div class="flex gap-2" style="flex-wrap:wrap">
+      <button class="btn btn-outline" onclick="editPropertyModal(_lead, loadLead)">✎ Edit</button>
+      ${l.archived_at ? "" : `<button class="btn btn-outline" onclick="archiveProperty(_lead, () => location.href='/properties')">🗄 Archive</button>`}
+      <a href="/properties" class="btn btn-outline">← Properties</a>
     </div>
   </div>
 
@@ -55,6 +81,13 @@ function renderLead(l, tl, brief) {
     <div class="card-header">🏠 Property — value, tax, debt, MLS</div>
     <div class="card-body">${renderPropertyBrief(brief, { refreshable: true })}</div>
   </div>
+
+  <div class="card mb-4">
+    <div class="card-header">🔎 Property research
+      <button class="btn btn-outline btn-sm" onclick="runPropertyScan(LEAD_ID, this)">🔎 Scan property</button></div>
+    <div class="card-body" id="scan-box"><div class="text-sm text-muted">Loading…</div></div>
+  </div>
+
 
   <div class="grid-2">
     <div>
@@ -125,7 +158,7 @@ function renderLead(l, tl, brief) {
           <div class="text-xs text-muted mt-4">MAO = (ARV × 0.70) − Repairs − Fee. ${valuation.comp_count} comps used.${valuation.comps_is_mock ? " <strong>Mock comps.</strong>" : ""}</div>
           <button class="btn btn-outline btn-sm mt-4" onclick="valuationModal()">Re-value</button>
         ` : `
-          <div class="empty-state text-sm">No valuation yet. Comp this lead to compute MAO.</div>
+          <div class="empty-state text-sm">No valuation yet. Comp this property to compute MAO.</div>
           <button class="btn btn-gold mt-4" onclick="valuationModal()">Comp & Compute MAO</button>
         `}
       </div>

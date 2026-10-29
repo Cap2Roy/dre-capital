@@ -11,6 +11,7 @@ Source types:
   - public_api:  REST APIs that return JSON property data
   - html:        Generic HTML page with property listings
   - agent:       A scraping agent crawls from the URL (see app.services.scraping_agent)
+  - gov_*:       Government sale sites with deterministic parsers (see app.services.gov_sources)
 
 Any source may set ``agent_id``: that scraping agent then does the LLM parse +
 scoring step instead of the env-var LLM config below.
@@ -44,7 +45,7 @@ from app.services.stacking import (
     get_or_create_lead,
     recompute_stack_depths,
 )
-from app.services import scraping_agent
+from app.services import gov_sources, scraping_agent
 from app.services.agents import AgentError
 from app.timeutil import utcnow
 
@@ -154,6 +155,7 @@ SOURCE_DIRECTORY: list[dict[str, str]] = [
         "state": "AZ",
         "county": "Maricopa",
     },
+    *gov_sources.DIRECTORY,
 ]
 
 
@@ -728,6 +730,7 @@ SOURCE_ADAPTERS = {
     "county_tax": scrape_county_tax,
     "public_api": scrape_public_api,
     "html": scrape_html,
+    **gov_sources.ADAPTERS,
 }
 
 
@@ -778,7 +781,8 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
             record_usage(db)
         raw_text = adapter(source.url, params, api_key)
 
-        structured = source.source_type in ("rentcast", "arcgis")
+        gov = source.source_type in gov_sources.ADAPTERS
+        structured = gov or source.source_type in ("rentcast", "arcgis")
         if agent and not structured:
             # The scraping agent reads the page and scores what it finds.
             leads = scraping_agent.assist_source_parse(db, agent, source, raw_text, None, params)
@@ -789,8 +793,8 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
             db.commit()
             return
 
-        # Parse raw data into structured records using LLM or HTML parser
-        records = llm_parse_raw_data(raw_text)
+        # Parse raw data into structured records (government adapters already return them)
+        records = json.loads(raw_text) if gov else llm_parse_raw_data(raw_text)
 
         # Normalize RentCast records (property records or MLS listings) to our schema
         if source.source_type == "rentcast":
@@ -820,7 +824,7 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
 
         # Create ScrapeResult entries with LLM analysis
         for record in records[:200]:
-            analysis = llm_analyze_property(record)
+            analysis = gov_sources.analyze_record(record) if gov else llm_analyze_property(record)
             result = ScrapeResult(
                 job_id=job.id,
                 property_data=json.dumps(record),
@@ -828,8 +832,8 @@ def run_scrape_job(db: Session, job: ScrapeJob) -> None:
             )
             db.add(result)
 
-        # Generate LLM summary
-        job.llm_summary = llm_summarize_scrape(records)
+        # Generate summary
+        job.llm_summary = gov_sources.summarize(records, source.name) if gov else llm_summarize_scrape(records)
 
         job.status = ScrapeJobStatus.COMPLETED
         job.completed_at = utcnow()
@@ -974,7 +978,7 @@ def import_scrape_results(
             skipped += 1
             continue
 
-        addr = data.get("property_address", "").strip()
+        addr = str(data.get("property_address") or "").strip()
         if not addr:
             skipped += 1
             continue
@@ -1037,12 +1041,18 @@ def import_scrape_results(
             rec.source = "rentcast"
             rec.fetched_at = utcnow()
 
-        # Sale details from foreclosure / tax / sheriff-sale lists (agent scrapes) go on the lead.
+        # Sale details from foreclosure / tax / sheriff-sale / government-auction lists go on the lead.
+        # (MLS list prices already live on the PropertyRecord via ``_listing``.)
         sale_bits = [b for b in (
-            f"Sale date {data['sale_date']}" if data.get("sale_date") else None,
+            f"Program {data['program']}" if data.get("program") else None,
+            f"Sale date {data['sale_date']}" + (f" {data['sale_time']}" if data.get("sale_time") else "") if data.get("sale_date") else None,
             f"Case {data['case_number']}" if data.get("case_number") else None,
+            f"Account {data['account_number']}" if data.get("account_number") else None,
+            f"Status {data['listing_status']}" if data.get("listing_status") and not data.get("_listing") else None,
             f"Plaintiff/lender {data['lender']}" if data.get("lender") else None,
             f"Amount owed ${_to_float(data['amount_owed']):,.2f}" if _to_float(data.get("amount_owed")) else None,
+            f"Minimum bid ${_to_float(data['minimum_bid']):,.2f}" if _to_float(data.get("minimum_bid")) else None,
+            f"List price ${_to_float(data['list_price']):,.2f}" if _to_float(data.get("list_price")) and not data.get("_listing") else None,
         ) if b]
         if sale_bits:
             line = "Scraped sale info: " + "; ".join(sale_bits) + (f" (source: {data['source_url']})" if data.get("source_url") else "")

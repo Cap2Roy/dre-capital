@@ -143,6 +143,9 @@ class LeadOut(ORMBase):
     owner_is_llc: bool
     owner_email: Optional[str] = None
     mailing_address: Optional[str] = None
+    mailing_city: Optional[str] = None
+    mailing_state: Optional[str] = None
+    mailing_zip: Optional[str] = None
     absentee: bool
     beds: Optional[int] = None
     baths: Optional[float] = None
@@ -156,6 +159,8 @@ class LeadOut(ORMBase):
     next_followup: Optional[UTCDateTime] = None
     notes: Optional[str] = None
     created_at: UTCDateTime
+    archived_at: Optional[UTCDateTime] = None
+    archive_reason: Optional[str] = None
     phones: list[PhoneOut] = []
     comps: list[CompOut] = []
     valuations: list[ValuationOut] = []
@@ -186,9 +191,32 @@ class LeadCreate(BaseModel):
 
 
 class LeadUpdate(BaseModel):
+    """Partial update: only fields present in the body change (property edits included)."""
     status: Optional[str] = None
     notes: Optional[str] = None
     next_followup: Optional[UTCDateTime] = None
+    property_address: Optional[str] = None
+    property_city: Optional[str] = None
+    property_state: Optional[str] = None
+    property_zip: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    owner_is_llc: Optional[bool] = None
+    mailing_address: Optional[str] = None
+    mailing_city: Optional[str] = None
+    mailing_state: Optional[str] = None
+    mailing_zip: Optional[str] = None
+    beds: Optional[int] = None
+    baths: Optional[float] = None
+    sqft: Optional[int] = None
+    year_built: Optional[int] = None
+    rehab_level: Optional[str] = None
+    assessed_value: Optional[float] = None
+    taxes_owed: Optional[float] = None
+
+
+class LeadArchive(BaseModel):
+    reason: Optional[str] = None
 
 
 class LeadAssign(BaseModel):

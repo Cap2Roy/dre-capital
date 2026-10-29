@@ -9,7 +9,7 @@
 </div>
 
 <div class="card">
-  <div class="card-header">Warm & Working Leads — Comped & Pending</div>
+  <div class="card-header">Warm & Working Properties — Comped & Pending</div>
   <div class="table-wrap">
     <table class="data-table">
       <thead><tr><th>Address</th><th>Owner</th><th>Stack</th><th>Status</th><th>ARV</th><th>Repairs</th><th>MAO</th><th>Assessed</th><th>Action</th></tr></thead>
@@ -46,7 +46,7 @@ async function loadComps() {
     } else {
       body.innerHTML = leads.map(l => {
         const v = l.valuations[0];
-        return `<tr onclick="location.href='/leads/${l.id}'">
+        return `<tr onclick="location.href='/properties/${l.id}'">
           <td><div class="font-semi">${escHtml(l.property_address)}</div><div class="text-xs text-muted">${fmtCityState(l.property_city, l.property_state)}</div></td>
           <td>${escHtml(l.owner_name)}</td>
           <td>${stackBadge(l.stack_depth)}</td>
@@ -55,7 +55,7 @@ async function loadComps() {
           <td class="col-num">${v ? fmtMoney(v.repair_estimate) : "—"}</td>
           <td class="col-num font-bold" style="color:var(--success)">${v ? fmtMoney(v.mao) : "—"}</td>
           <td class="col-num">${fmtMoneyK(l.assessed_value)}</td>
-          <td><a href="/leads/${l.id}" class="btn btn-outline btn-sm">${v ? "View" : "Comp →"}</a></td>
+          <td><a href="/properties/${l.id}" class="btn btn-outline btn-sm">${v ? "View" : "Comp →"}</a></td>
         </tr>`;
       }).join("");
     }

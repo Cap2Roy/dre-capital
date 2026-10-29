@@ -49,7 +49,7 @@
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 const ME = "{{ current_user.id if current_user else '' }}";
 const KIND_INFO = {
-  calling: { icon: "📞", title: "Calling agents", blurb: "Dial a number and run a call flow by voice. Calls to a lead's number only go through after the number passes every check (owner match, consent, calling hours…)." },
+  calling: { icon: "📞", title: "Calling agents", blurb: "Dial a number and run a call flow by voice. Calls to a property owner's number only go through after the number passes every check (owner match, consent, calling hours…)." },
   scraping: { icon: "🕸", title: "Scraping agents", blurb: "Read a website (county lists, listings), follow next pages, and pull properties with motivated-seller signals into the Scraper." },
   scripting: { icon: "✍️", title: "Script-writing agents", blurb: "Draft new call flows or improve existing ones from your brief and past call results (Settings → Call Flows)." },
 };

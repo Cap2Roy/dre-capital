@@ -31,7 +31,7 @@
         <div class="form-group">
           <label class="form-label" for="live-lead">Rehearse a property (optional)</label>
           <select id="live-lead" class="form-select lead-select"><option value="">— Generic seller conversation —</option></select>
-          <div class="form-hint">You play the seller; the agent uses this lead's address and facts on record (never our offer numbers).</div>
+          <div class="form-hint">You play the seller; the agent uses this property's address and facts on record (never our offer numbers).</div>
           <div id="live-lead-brief" class="mt-2"></div>
         </div>
         <button type="submit" class="btn btn-gold" id="live-start-btn">🎙 Start live call</button>
@@ -91,7 +91,7 @@
           This is my phone number and I agree to receive an AI-voice test call on it.</label>
       </div>
       <button type="submit" class="btn btn-outline" id="ai-start-btn">📞 Call my phone</button>
-      <div class="form-hint mt-2">AI calls to sellers need their prior written consent, so numbers belonging to CRM leads are blocked.</div>
+      <div class="form-hint mt-2">AI calls to sellers need their prior written consent, so numbers belonging to properties in the CRM are blocked.</div>
     </form>
   </div>
 </div>
@@ -183,7 +183,7 @@ async function showLeadBrief(leadId, boxId) {
   const box = document.getElementById(boxId);
   if (!leadId) { box.innerHTML = ""; return; }
   box.innerHTML = '<div class="text-sm text-muted">Loading property…</div>';
-  try { box.innerHTML = renderPropertyBrief(await API.get(`/api/leads/${leadId}/brief`), { compact: true }); }
+  try { box.innerHTML = renderPropertyBrief(await API.get(`/api/properties/${leadId}/brief`), { compact: true }); }
   catch (e) { box.innerHTML = `<div class="text-sm text-danger">${escHtml(e.message)}</div>`; }
 }
 
@@ -459,7 +459,7 @@ function showCall(call, startPolling) {
     <div class="gc-bar">
       <span>${isLiveCall ? "🎙 Browser call (Gemini Live)" : (call.phone_id ? "🏠 Owner " : "📞 ") + escHtml(fmtPhone(call.to_number))}</span>
       ${call.outcome ? `<span class="badge badge-info">${escHtml(call.outcome.replace(/_/g, " "))}</span>` : ""}
-      ${call.lead_id ? `<a href="/leads/${call.lead_id}" class="text-sm">Open lead →</a>` : ""}
+      ${call.lead_id ? `<a href="/properties/${call.lead_id}" class="text-sm">Open property →</a>` : ""}
       <span>Asking for <strong>${escHtml(call.greet_name || "")}</strong></span>
       ${call.voice ? `<span class="text-muted">Voice: ${escHtml(call.voice)}</span>` : ""}
       <span id="ai-timer" class="col-mono">${live_ ? (_startedAt ? fmtDur(Math.floor((Date.now() - _startedAt) / 1000)) : "") : fmtDur(call.duration_seconds)}</span>

@@ -32,7 +32,7 @@ def match_for_lead(lead_id: str, db: Session = Depends(get_db)):
     """Find buyers whose buy-box matches a lead. Top 5 first per the manual."""
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     val = db.execute(
         select(Valuation).where(Valuation.lead_id == lead_id)
         .order_by(Valuation.created_at.desc())

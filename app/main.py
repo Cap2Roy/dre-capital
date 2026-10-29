@@ -16,12 +16,13 @@ from fastapi.templating import Jinja2Templates
 from app.database import init_db
 from app.changelog import CURRENT_VERSION as __version__
 from app.routers import (
-    agents, ai_calls, auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, live_agent, meetings, messages, scraper, settings, users, valuation,
+    agents, ai_calls, auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, live_agent, meetings, messages,
+    property_scan, scraper, settings, users, valuation,
 )
 from app.services.scheduler import scheduler_loop
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/ai-calls/twilio/inbound", "/api/messages/inbound", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/scraper/auto/cron", "/api/ai-calls/twilio/inbound", "/api/messages/inbound", "/static"}
 
 
 def _register_quo_webhooks_on_startup() -> None:
@@ -65,6 +66,25 @@ def _ensure_default_agents() -> None:
         db.close()
 
 
+def _ensure_government_sources() -> None:
+    """Government sale sources on the daily scan plan. Idempotent: re-adds any that are missing, so turn a
+    source off (inactive) rather than deleting it."""
+    import logging
+    from app.database import SessionLocal
+    from app.services.gov_sources import ensure_government_sources
+    db = SessionLocal()
+    try:
+        created = ensure_government_sources(db)
+        db.commit()
+        if created:
+            logging.getLogger("uvicorn.error").info("Government sale sources added: %s", ", ".join(created))
+    except Exception as exc:
+        db.rollback()
+        logging.getLogger("uvicorn.error").warning("Government sources not added: %s", exc)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -78,6 +98,7 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger("uvicorn.error").warning("Quo webhook registration timed out; continuing startup")
     _ensure_default_agents()
+    _ensure_government_sources()
     scheduler_task = asyncio.create_task(scheduler_loop())
     yield
     scheduler_task.cancel()
@@ -103,7 +124,7 @@ templates.env.filters["wn_method_class"] = lambda m: {
 }.get(m, "badge-neutral")
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
+for r in (auth, users, settings, dashboard, leads, property_scan, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
     app.include_router(r.router)
 
 
@@ -170,14 +191,27 @@ def page_dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {**_ctx(request), "page": "dashboard"})
 
 
-@app.get("/leads", response_class=HTMLResponse)
-def page_leads(request: Request):
-    return templates.TemplateResponse("leads.html", {**_ctx(request), "page": "leads"})
+@app.get("/properties", response_class=HTMLResponse)
+def page_properties(request: Request):
+    return templates.TemplateResponse("leads.html", {**_ctx(request), "page": "properties"})
 
 
-@app.get("/leads/{lead_id}", response_class=HTMLResponse)
-def page_lead_detail(request: Request, lead_id: str):
-    return templates.TemplateResponse("lead_detail.html", {**_ctx(request), "page": "leads", "lead_id": lead_id})
+@app.get("/properties/{lead_id}", response_class=HTMLResponse)
+def page_property_detail(request: Request, lead_id: str):
+    return templates.TemplateResponse("lead_detail.html", {**_ctx(request), "page": "properties", "lead_id": lead_id})
+
+
+@app.get("/leads")
+def page_leads_moved(request: Request):
+    """Leads were renamed Properties — keep old links and bookmarks working."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/properties" + (f"?{request.url.query}" if request.url.query else ""), status_code=301)
+
+
+@app.get("/leads/{lead_id}")
+def page_lead_moved(lead_id: str):
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"/properties/{lead_id}", status_code=301)
 
 
 @app.get("/queue", response_class=HTMLResponse)

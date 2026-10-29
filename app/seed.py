@@ -439,23 +439,28 @@ def run() -> None:
                     completed_at=utcnow() - timedelta(days=2),
                 ))
 
-        # ── Settings rows (sensible defaults, idempotent) ────────────────────
-        settings_defaults = [
-            ("company_name", "Direct Real Estate Capital LLC", "general", "Company name"),
-            ("auto_scrape_enabled", "0", "scraper", "Daily auto-scrape on/off"),
-            ("auto_scrape_hour", "6", "scraper", "Hour (0-23) to run daily scrape"),
-            ("comps_provider", "mock", "comps", "Active comps provider"),
-            ("meeting_reminders_enabled", "1", "meetings", "Send meeting SMS reminders"),
-        ]
-        for key, value, category, label in settings_defaults:
-            if db.get(Setting, key) is None:
-                db.add(Setting(key=key, value=value, category=category, label=label))
+        seed_default_settings(db, auto_scrape="0")   # demo data: don't scrape on a schedule
         seed_default_call_flows(db)
 
         db.commit()
         print(f"Seeded: {len(leads)} leads, {len(source_lists)} lists, {len(buyers_spec)} buyers, 2 contracts, meetings, message logs, scrape jobs, settings.")
     finally:
         db.close()
+
+
+def seed_default_settings(db, auto_scrape: str = "1") -> None:
+    """Idempotently add default settings rows (never overwrites a saved value)."""
+    settings_defaults = [
+        ("company_name", "Direct Real Estate Capital LLC", "general", "Company name"),
+        ("auto_scrape_enabled", auto_scrape, "scraper", "Daily auto-scrape on/off"),
+        ("auto_scrape_hour", "6", "scraper", "Hour (0-23) to run daily scrape"),
+        ("comps_provider", "mock", "comps", "Active comps provider"),
+        ("meeting_reminders_enabled", "1", "meetings", "Send meeting SMS reminders"),
+    ]
+    for key, value, category, label in settings_defaults:
+        if db.get(Setting, key) is None:
+            db.add(Setting(key=key, value=value, category=category, label=label))
+    db.commit()
 
 
 def seed_default_templates(db) -> None:
@@ -599,11 +604,12 @@ def seed_default_call_flows(db) -> None:
         print(f"Seeded {added} default call flow(s).")
 
 def ensure_admin() -> None:
-    """Production helper: create default users + demo data if DB is empty.
+    """Production helper: create the default users and out-of-the-box defaults.
 
-    Creates admin + acquisitions operator users (if not present), then seeds
-    demo leads/lists/buyers/contracts if the DB has no leads at all.
-    Called by Dockerfile on container startup.
+    Never creates demo properties — production holds only real data (imported
+    lists, scraped government sales, properties added by the team). Local demo
+    data comes from ``python -m app.seed`` (``run()``). Called by the Dockerfile
+    on container startup; idempotent.
     """
     import os
     from app.services.auth import hash_password
@@ -661,19 +667,10 @@ def ensure_admin() -> None:
             print("Created service account: tester@dre-capital.com")
             print("Created admin: roy@betterai360.com")
 
-        # Out-of-the-box message templates (independent of lead count).
+        # Out-of-the-box message templates, call flows, and settings (daily scan on).
         seed_default_templates(db)
         seed_default_call_flows(db)
-
-        # Seed demo data if DB is empty
-        lead_count = db.query(Lead).count()
-        if lead_count == 0:
-            print("DB has no leads — seeding demo data...")
-            db.close()
-            run()
-            seed_default_templates(SessionLocal())
-            seed_default_call_flows(SessionLocal())
-            return
+        seed_default_settings(db, auto_scrape="1")
     finally:
         db.close()
 

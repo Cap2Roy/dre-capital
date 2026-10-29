@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.schemas import (
     ScrapeSourceOut,
     ScrapeSourceUpdate,
 )
+from app.services import gov_sources
 from app.services.agents import default_agent
 from app.services.scraper import get_source_directory, import_scrape_results, run_scrape_job
 from app.services.scraping_agent import ScrapingError, check_scraping_agent, validate_url
@@ -230,6 +231,23 @@ def list_directory():
     return get_source_directory()
 
 
+# ── Government sale sources ───────────────────────────────────────────────────
+
+@router.post("/government/ensure")
+def ensure_government_sources(db: Session = Depends(get_db)):
+    """Add any missing government sale sources (active, daily auto-scrape). Idempotent."""
+    return {"created": gov_sources.ensure_government_sources(db)}
+
+
+@router.post("/government/import-new")
+def import_new_government_results(
+    source_ids: list[str] | None = Body(None, embed=True),
+    db: Session = Depends(get_db),
+):
+    """Import every not-yet-imported result from each government source's latest completed job."""
+    return gov_sources.import_all_new(db, source_ids=source_ids or None)
+
+
 # ── LLM status ────────────────────────────────────────────────────────────────
 
 @router.get("/llm-status")
@@ -250,6 +268,26 @@ def run_auto_scrape_now(db: Session = Depends(get_db)):
     """
     from app.services.scheduler import run_daily_auto_scrape
     return run_daily_auto_scrape(db)
+
+
+@router.post("/auto/cron")
+def auto_scrape_cron(request: Request, db: Session = Depends(get_db)):
+    """Daily scan, called by Cloud Scheduler with the X-Cron-Token header (public path; token-checked).
+    Scrapes every active auto-scrape source, then imports new government-sale properties."""
+    import hmac
+    import os
+    from app.services.scheduler import _auto_scrape_enabled, run_daily_auto_scrape
+    from app.services.settings import set_setting
+    from app.timeutil import utcnow
+    expected = os.environ.get("CRON_TOKEN", "")
+    if not expected or not hmac.compare_digest(request.headers.get("X-Cron-Token", ""), expected):
+        raise HTTPException(403, "Invalid cron token")
+    if not _auto_scrape_enabled(db):
+        return {"skipped": "Daily scan is turned off (Settings)."}
+    result = run_daily_auto_scrape(db)
+    set_setting(db, "last_auto_scrape_date", utcnow().strftime("%Y-%m-%d"))
+    db.commit()
+    return result
 
 
 @router.get("/auto/status")

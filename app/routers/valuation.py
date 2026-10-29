@@ -25,7 +25,7 @@ def create_valuation(lead_id: str, payload: ValuationRequest, db: Session = Depe
     """
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
 
     provider = None
     if payload.refresh_comps:

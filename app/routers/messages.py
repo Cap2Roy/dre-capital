@@ -92,7 +92,7 @@ def send_message(payload: SendSmsRequest, request: Request, db: Session = Depend
         raise HTTPException(404, "Phone not found")
     lead = db.get(Lead, phone.lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
 
     template = None
     if payload.template_id:

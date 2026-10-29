@@ -38,7 +38,7 @@ def create_contract(payload: ContractCreate, lead_id: str = None, db: Session = 
         raise HTTPException(400, "lead_id query param required")
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     buyer = None
     if payload.buyer_id:
         buyer = db.get(Buyer, payload.buyer_id)

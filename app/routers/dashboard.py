@@ -24,11 +24,11 @@ def dashboard(db: Session = Depends(get_db)):
     today_start = to_naive_utc(datetime.combine(today, time.min).astimezone())
     tomorrow_start = to_naive_utc(datetime.combine(today + timedelta(days=1), time.min).astimezone())
 
-    total = db.execute(select(func.count(Lead.id))).scalar() or 0
-    new = db.execute(select(func.count(Lead.id)).where(Lead.status == LeadStatus.NEW)).scalar() or 0
-    warm = db.execute(select(func.count(Lead.id)).where(Lead.status == LeadStatus.WARM)).scalar() or 0
+    total = db.execute(select(func.count(Lead.id)).where(Lead.archived_at.is_(None))).scalar() or 0
+    new = db.execute(select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.status == LeadStatus.NEW)).scalar() or 0
+    warm = db.execute(select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.status == LeadStatus.WARM)).scalar() or 0
     under_contract = db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.UNDER_CONTRACT)
+        select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.status == LeadStatus.UNDER_CONTRACT)
     ).scalar() or 0
     calls_today = db.execute(
         select(func.count(Call.id)).where(Call.created_at >= today_start)
@@ -41,13 +41,13 @@ def dashboard(db: Session = Depends(get_db)):
         )
     ).scalar() or 0
     stack_today = db.execute(
-        select(func.count(Lead.id)).where(Lead.stack_depth >= 3)
+        select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.stack_depth >= 3)
     ).scalar() or 0
     stack_week = db.execute(
-        select(func.count(Lead.id)).where(Lead.stack_depth == 2)
+        select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.stack_depth == 2)
     ).scalar() or 0
     stack_mail = db.execute(
-        select(func.count(Lead.id)).where(Lead.stack_depth <= 1)
+        select(func.count(Lead.id)).where(Lead.archived_at.is_(None), Lead.stack_depth <= 1)
     ).scalar() or 0
     dnc = db.execute(
         select(func.count(Phone.id)).where(Phone.dnc_flagged == True)
@@ -69,7 +69,7 @@ def call_queue(db: Session = Depends(get_db)):
     leads that have no callable phones.
     """
     leads = db.execute(
-        select(Lead).where(Lead.stack_depth >= 2).order_by(
+        select(Lead).where(Lead.archived_at.is_(None), Lead.stack_depth >= 2).order_by(
             Lead.stack_depth.desc(), Lead.next_followup.asc().nulls_last()
         )
     ).scalars().all()

@@ -11,9 +11,9 @@
 
 <div class="stats-grid" id="stats-grid">
   <div class="stat-card"><div class="stat-icon" style="background:var(--info-bg);color:var(--info)">⌂</div>
-    <div class="stat-value" id="stat-total">—</div><div class="stat-label">Total Leads</div></div>
+    <div class="stat-value" id="stat-total">—</div><div class="stat-label">Properties</div></div>
   <div class="stat-card"><div class="stat-icon" style="background:var(--warning-bg);color:var(--warning)">☻</div>
-    <div class="stat-value" id="stat-warm">—</div><div class="stat-label">Warm Leads</div>
+    <div class="stat-value" id="stat-warm">—</div><div class="stat-label">Warm Properties</div>
     <div class="stat-sub">Comp & send offer in 24h</div></div>
   <div class="stat-card"><div class="stat-icon" style="background:var(--success-bg);color:var(--success)">✎</div>
     <div class="stat-value" id="stat-contract">—</div><div class="stat-label">Under Contract</div></div>
@@ -96,10 +96,10 @@
     const top = queue.queue.slice(0, 5);
     const el = document.getElementById("queue-preview");
     if (top.length === 0) {
-      el.innerHTML = '<div class="empty-state"><div class="icon">✓</div>No callable leads in queue. All caught up.</div>';
+      el.innerHTML = '<div class="empty-state"><div class="icon">✓</div>No callable properties in the queue. All caught up.</div>';
     } else {
       el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Stack</th><th>Address</th><th>Owner</th><th>Tier</th><th>Calls</th></tr></thead><tbody>` +
-        top.map((l, i) => `<tr onclick="location.href='/leads/${l.id}'">
+        top.map((l, i) => `<tr onclick="location.href='/properties/${l.id}'">
           <td class="col-mono">${i + 1}</td>
           <td>${stackBadge(l.stack_depth)}</td>
           <td>${escHtml(l.address)}<br><span class="text-xs text-muted">${fmtCityState(l.city, l.state)}</span></td>

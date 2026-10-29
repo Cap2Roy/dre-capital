@@ -1,4 +1,4 @@
-"""Leads router: CRUD, filtering, detail, follow-ups, notes."""
+"""Properties (leads) router: CRUD, filtering, detail, edit, archive / restore / delete, follow-ups, notes."""
 from __future__ import annotations
 
 from typing import Optional
@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import FollowUp, Lead, LeadStatus, ListType
-from app.schemas import FollowUpCreate, LeadCreate, LeadOut, LeadUpdate
-from app.timeutil import iso_utc
+from app.schemas import FollowUpCreate, LeadArchive, LeadCreate, LeadOut, LeadUpdate
+from app.timeutil import iso_utc, utcnow
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -23,10 +23,12 @@ def list_leads(
     state: Optional[str] = None,
     min_stack: Optional[int] = None,
     sort: str = "stack",
+    archived: bool = False,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
 ):
-    stmt = select(Lead)
+    """Active properties by default; ``archived=true`` lists the archive instead."""
+    stmt = select(Lead).where(Lead.archived_at.isnot(None) if archived else Lead.archived_at.is_(None))
     # Eager-load nested collections to avoid N+1 for LeadOut serialization.
     stmt = stmt.options(
         selectinload(Lead.phones),
@@ -54,7 +56,9 @@ def list_leads(
     if min_stack is not None:
         stmt = stmt.where(Lead.stack_depth >= min_stack)
 
-    if sort == "stack":
+    if archived:
+        stmt = stmt.order_by(Lead.archived_at.desc())
+    elif sort == "stack":
         stmt = stmt.order_by(Lead.stack_depth.desc(), Lead.next_followup.asc().nulls_last())
     elif sort == "followup":
         stmt = stmt.order_by(Lead.next_followup.asc().nulls_last())
@@ -87,7 +91,7 @@ def comps_status(db: Session = Depends(get_db)):
 def get_lead(lead_id: str, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     return lead
 
 
@@ -104,26 +108,105 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
 def update_lead(lead_id: str, payload: LeadUpdate, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
-    if payload.status:
+        raise HTTPException(404, "Property not found")
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("status"):
         try:
-            lead.status = LeadStatus(payload.status)
+            lead.status = LeadStatus(data["status"])
         except ValueError:
-            raise HTTPException(400, f"Invalid status: {payload.status}")
-    if payload.notes is not None:
-        lead.notes = payload.notes
-    if payload.next_followup:
-        lead.next_followup = payload.next_followup
+            raise HTTPException(400, f"Invalid status: {data['status']}")
+    if "notes" in data:
+        lead.notes = data["notes"]
+    if data.get("next_followup"):
+        lead.next_followup = data["next_followup"]
+    # Property / owner edits
+    text_fields = ("property_address", "property_city", "property_zip", "owner_name", "owner_email",
+                   "mailing_address", "mailing_city", "mailing_zip", "rehab_level")
+    for f in text_fields:
+        if f in data:
+            v = (data[f] or "").strip() or None
+            if f == "property_address" and v is None:
+                raise HTTPException(400, "The property address can't be empty.")
+            setattr(lead, f, v if v is not None or f != "owner_name" else "")   # owner_name is NOT NULL
+    for f in ("property_state", "mailing_state"):
+        if f in data:
+            v = (data[f] or "").strip().upper() or None
+            if v and len(v) != 2:
+                raise HTTPException(400, "Use a 2-letter state code, e.g. TX.")
+            setattr(lead, f, v)
+    for f in ("beds", "baths", "sqft", "year_built", "assessed_value", "taxes_owed", "owner_is_llc"):
+        if f in data:
+            setattr(lead, f, data[f])
+    if any(f in data for f in ("property_address", "mailing_address")):
+        lead.absentee = bool(lead.mailing_address and lead.property_address
+                             and lead.mailing_address.strip().lower() != lead.property_address.strip().lower())
     db.commit()
     db.refresh(lead)
     return lead
+
+
+@router.post("/{lead_id}/archive", response_model=LeadOut)
+def archive_lead(lead_id: str, payload: LeadArchive, request: Request, db: Session = Depends(get_db)):
+    """Hide a property from Properties, the call queue, and the dashboard (restorable).
+    Re-scans keep it archived instead of bringing it back."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Property not found")
+    user = getattr(request.state, "user", None)
+    lead.archived_at = utcnow()
+    lead.archived_by = user.id if user else None
+    lead.archive_reason = (payload.reason or "").strip()[:255] or None
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.post("/{lead_id}/restore", response_model=LeadOut)
+def restore_lead(lead_id: str, db: Session = Depends(get_db)):
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Property not found")
+    lead.archived_at = lead.archived_by = lead.archive_reason = None
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+@router.delete("/{lead_id}")
+def delete_lead(lead_id: str, db: Session = Depends(get_db)):
+    """Permanently delete an archived property with its phones, calls, comps and follow-ups.
+    Properties with contracts can only be archived (deal history is kept)."""
+    from app.models import AiCall, Call, Meeting, MessageLog
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Property not found")
+    if lead.archived_at is None:
+        raise HTTPException(409, "Archive the property first — only archived properties can be deleted.")
+    if lead.contracts:
+        raise HTTPException(409, "This property has contracts, so it stays archived instead of being deleted.")
+    phone_ids = [p.id for p in lead.phones]
+    for model in (MessageLog, Meeting):
+        for row in db.execute(select(model).where(model.lead_id == lead.id)).scalars():
+            row.lead_id = None
+            if hasattr(row, "phone_id") and row.phone_id in phone_ids:
+                row.phone_id = None
+    for ai in db.execute(select(AiCall).where(or_(AiCall.lead_id == lead.id, AiCall.phone_id.in_(phone_ids or [""])))).scalars():
+        ai.lead_id = None
+        ai.phone_id = None
+        ai.call_id = None
+    for call in db.execute(select(Call).where(Call.lead_id == lead.id)).scalars():
+        db.delete(call)
+    db.flush()
+    db.delete(lead)
+    db.commit()
+    return {"deleted": lead_id}
 
 
 @router.post("/{lead_id}/followups", response_model=LeadOut)
 def add_followup(lead_id: str, payload: FollowUpCreate, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     fu = FollowUp(lead_id=lead_id, due_at=payload.due_at, reason=payload.reason)
     db.add(fu)
     lead.next_followup = payload.due_at
@@ -138,7 +221,7 @@ def skiptrace_lead(lead_id: str, db: Session = Depends(get_db)):
     from app.services.skiptrace import skip_trace_lead
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     skip_trace_lead(db, lead)
     db.commit()
     db.refresh(lead)
@@ -150,7 +233,7 @@ def lead_timeline(lead_id: str, db: Session = Depends(get_db)):
     """Unified timeline: calls + followups + valuations + contracts in chrono order."""
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     events = []  # (sort key: naive-UTC datetime, event dict)
     for c in lead.calls:
         events.append((c.created_at, {"type": "call", "outcome": c.outcome.value,
@@ -172,7 +255,7 @@ def lead_timeline(lead_id: str, db: Session = Depends(get_db)):
 def _lead_or_404(db: Session, lead_id: str) -> Lead:
     lead = db.get(Lead, lead_id)
     if not lead:
-        raise HTTPException(404, "Lead not found")
+        raise HTTPException(404, "Property not found")
     return lead
 
 

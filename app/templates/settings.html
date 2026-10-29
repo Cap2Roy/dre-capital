@@ -182,6 +182,34 @@
     </div>
   </div>
 
+  {% if is_admin %}
+  <div class="card mb-4" id="psrc-card">
+    <div class="card-header">
+      Property data sources — Scan property
+      <span id="psrc-status" class="badge badge-neutral">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-sm text-muted mb-4">
+        <strong>Scan property</strong> runs every enabled source below for one address and shows the findings side by
+        side — ownership, value &amp; tax, sales, distress signals, listing — each fact with its source and link.
+        <strong>Grok</strong> researches public records on the web and we re-read each cited page to confirm the value;
+        paid databases add structured data once you enable them and add a key. Keys stay on the server and are never shown back.
+      </p>
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label" for="psrc-model">Grok research model</label>
+          <select id="psrc-model" class="form-select"></select>
+          <div class="form-hint">Each scan runs two Grok passes (official records; distress &amp; listings). Grok 4.3 found appraisal-district owners and county sheriff-sale notices in our tests.</div>
+        </div>
+      </div>
+      <div id="psrc-list" class="table-wrap"></div>
+      <div class="flex gap-2 mt-4">
+        <button type="button" class="btn btn-primary" onclick="savePropertySources()">Save Property Data Sources</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="card mb-4">
     <div class="card-header">
       Live AI Agent (Google Gemini Live · Vertex AI)
@@ -682,6 +710,75 @@ async function checkPropertyData(check) {
   } catch (err) { badge.textContent = "Error"; }
 }
 
+// ── Property data sources (Scan property) — admin only ──────────────────────
+let _psrc = null;
+
+function renderPropertySources(d) {
+  _psrc = d;
+  const sel = document.getElementById("psrc-model");
+  const models = d.models.some(m => m.id === d.model) ? d.models : [{ id: d.model, label: d.model }, ...d.models];
+  sel.innerHTML = models.map(m => `<option value="${escHtml(m.id)}" ${m.id === d.model ? "selected" : ""}>${escHtml(m.label)}</option>`).join("");
+  const ready = d.sources.filter(s => s.ready).length;
+  const badge = document.getElementById("psrc-status");
+  badge.className = `badge ${ready ? "badge-success" : "badge-warning"}`;
+  badge.textContent = ready ? `${ready} source${ready > 1 ? "s" : ""} on` : "⚠ No source on";
+  const link = (url, text) => /^https?:\/\//.test(url || "") ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer">${escHtml(text)}</a>` : "";
+  const rows = d.sources.map(s => {
+    const keyCell = !s.integrated ? `<span class="badge badge-neutral">not integrated yet</span>`
+      : !s.needs_key ? `<span class="badge badge-success">no key needed</span>`
+      : s.key_editable
+        ? `<input type="password" class="form-input" id="psrc-key-${escHtml(s.id)}" value="${escHtml(s.key_masked)}" autocomplete="off" placeholder="Paste API key">`
+        : `<span class="badge ${s.key_set ? "badge-success" : "badge-warning"}">${s.key_set ? "key set" : "no key"}</span>
+           <div class="form-hint">${s.id === "grok" ? "xAI key — agents default" : "RentCast key above"}</div>`;
+    const status = !s.integrated ? "" : s.ready ? `<span class="badge badge-success">on${s.needs_key ? " · key set" : ""}</span>`
+      : s.enabled ? `<span class="badge badge-warning">needs key</span>` : `<span class="badge badge-neutral">off</span>`;
+    return `<tr>
+      <td style="vertical-align:top"><input type="checkbox" id="psrc-on-${escHtml(s.id)}" ${s.enabled ? "checked" : ""} ${s.integrated ? "" : "disabled"} aria-label="Enable ${escHtml(s.name)}"></td>
+      <td style="vertical-align:top;max-width:420px"><strong>${escHtml(s.name)}</strong> ${status}
+        <div class="text-xs">${escHtml(s.description)}</div>
+        <div class="text-xs text-muted">Adds: ${escHtml(s.adds)}</div>
+        ${s.note ? `<div class="text-xs text-muted">${escHtml(s.note)}</div>` : ""}
+        <div class="text-xs">${[link(s.site_url, "Website"), link(s.docs_url, "API docs"), link(s.pricing_url, "Pricing")].filter(Boolean).join(" · ")}</div></td>
+      <td style="vertical-align:top;min-width:200px">${keyCell}</td>
+      <td style="vertical-align:top">${s.integrated ? `<button type="button" class="btn btn-outline btn-sm" onclick="testPropertySource('${escHtml(s.id)}', this)">Test</button>` : ""}
+        <div class="text-xs mt-2" id="psrc-test-${escHtml(s.id)}"></div></td></tr>`;
+  }).join("");
+  document.getElementById("psrc-list").innerHTML =
+    `<table class="data-table"><thead><tr><th>On</th><th>Source</th><th>API key</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function loadPropertySources() {
+  if (!document.getElementById("psrc-card")) return;
+  try { renderPropertySources(await API.get("/api/property-sources")); }
+  catch (err) { document.getElementById("psrc-status").textContent = "Error"; }
+}
+
+async function savePropertySources() {
+  if (!_psrc) return;
+  const sources = _psrc.sources.filter(s => s.integrated).map(s => {
+    const item = { id: s.id, enabled: document.getElementById(`psrc-on-${s.id}`).checked };
+    const keyEl = document.getElementById(`psrc-key-${s.id}`);
+    if (keyEl) item.key = keyEl.value;  // all-dots = keep current, empty = clear
+    return item;
+  });
+  try {
+    renderPropertySources(await API.put("/api/property-sources", { sources, model: document.getElementById("psrc-model").value }));
+    toast("Property data sources saved", "success");
+  } catch (err) { toast("Error: " + _apiErr(err), "error"); }
+}
+
+async function testPropertySource(id, btn) {
+  const out = document.getElementById(`psrc-test-${id}`);
+  btn.disabled = true;
+  out.textContent = "Testing…";
+  try {
+    const r = await API.post(`/api/property-sources/${encodeURIComponent(id)}/test`);
+    out.innerHTML = `<span class="badge ${r.ok ? "badge-success" : "badge-danger"}">${r.ok ? "✓" : "✗"}</span> ${escHtml(r.message)}`;
+  } catch (err) {
+    out.innerHTML = `<span class="badge badge-danger">✗</span> ${escHtml(_apiErr(err))}`;
+  } finally { btn.disabled = false; }
+}
+
 document.getElementById("gemini-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   await saveSettings([
@@ -987,7 +1084,7 @@ async function showCallFlowModal(id, draft) {
 const LIST_TYPES = [
   ["pre_foreclosure", "Pre-foreclosure"], ["tax_delinquent", "Tax delinquent"], ["probate", "Probate"],
   ["divorce", "Divorce"], ["absentee_owner", "Absentee owner"], ["tired_landlord", "Tired landlord"],
-  ["vacant_code_violation", "Vacant / code violation"],
+  ["vacant_code_violation", "Vacant / code violation"], ["government_sale", "Government sale / REO"],
 ];
 let _scriptAgents = [];
 
@@ -1126,6 +1223,6 @@ async function deleteFlow(id) {
 // ── Init ───────────────────────────────────────────────────────
 loadSettings();
 loadMyQuo();
-{% if is_admin %}loadUsers(); loadCallFlows();{% endif %}
+{% if is_admin %}loadUsers(); loadCallFlows(); loadPropertySources();{% endif %}
 </script>
 {% endblock %}

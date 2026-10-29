@@ -154,13 +154,14 @@ class _Robots:
 class RobotsCache:
     """robots.txt per origin for one run (RFC 9309 semantics)."""
 
-    def __init__(self) -> None:
+    def __init__(self, timeout: float = ROBOTS_TIMEOUT) -> None:
         self._by_origin: dict[str, _Robots] = {}
+        self._timeout = timeout
 
     def _load(self, origin: str) -> _Robots:
         robots_url = origin + "/robots.txt"
         try:
-            with httpx.stream("GET", robots_url, headers={"User-Agent": USER_AGENT}, timeout=ROBOTS_TIMEOUT,
+            with httpx.stream("GET", robots_url, headers={"User-Agent": USER_AGENT}, timeout=self._timeout,
                               follow_redirects=True) as resp:
                 status = resp.status_code
                 body, _ = _read_capped(resp, MAX_ROBOTS_BYTES) if status < 400 else (b"", False)
@@ -193,10 +194,10 @@ class RobotsCache:
         if not r.parser.can_fetch(ROBOTS_TOKEN, url):
             raise RobotsDisallowed(f"Refused {url}: robots.txt disallows {ROBOTS_TOKEN} from fetching this page.")
 
-    def delay(self, url: str) -> float:
+    def delay(self, url: str, cap: float = MAX_CRAWL_DELAY) -> float:
         r = self._get(url)
         crawl_delay = r.parser.crawl_delay(ROBOTS_TOKEN) if r.parser else None
-        return min(max(POLITENESS_DELAY, float(crawl_delay or 0)), MAX_CRAWL_DELAY)
+        return min(max(POLITENESS_DELAY, float(crawl_delay or 0)), cap)
 
 
 @dataclass
