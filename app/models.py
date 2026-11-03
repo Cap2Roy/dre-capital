@@ -413,6 +413,19 @@ class Buyer(TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Sourcing: where this buyer came from (network | title_partner | meetup | marketplace | referral).
     source: Mapped[Optional[str]] = mapped_column(String(40), default="network")
+    # Discovered buyers (buyer finder): who they are, why we think they buy, and where we found them.
+    buyer_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)   # investor_company | portfolio_owner | wholesaler | ibuyer | landlord | flipper
+    target_zips: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)   # "76119,76110"
+    property_types: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # "single_family,multi_family,land"
+    website: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    mailing_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)            # e.g. "owns 14 homes in 76119; bought 5 since 2024"
+    properties_owned: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_purchase: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)   # high | medium | low
+    found_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Preferred / referring title company for this buyer's closings.
     title_company_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("title_companies.id"), nullable=True)
     contracts: Mapped[list["Contract"]] = relationship(back_populates="buyer")

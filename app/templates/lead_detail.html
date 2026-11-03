@@ -208,7 +208,8 @@ function renderLead(l, tl, brief) {
       `}
 
       <div class="card mb-4">
-        <div class="card-header">Matched Buyers</div>
+        <div class="card-header">Matched Buyers <span id="matched-count"></span>
+          <button class="btn btn-outline btn-sm" onclick="findBuyersHere(this)">🔎 Find buyers for this area</button></div>
         <div class="card-body" id="matched-buyers"><div class="empty-state text-sm">Loading buyer matches…</div></div>
       </div>
 
@@ -747,25 +748,56 @@ async function submitContract() {
   } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
 }
 
+function renderMatchedBuyers(data) {
+  const el = document.getElementById("matched-buyers");
+  if (!el) return;
+  const cnt = document.getElementById("matched-count");
+  if (cnt) cnt.innerHTML = data.total_matched ? `<span class="badge badge-info">${escHtml(data.total_matched)}</span>` : "";
+  const p = data.property || {};
+  const basis = [p.value ? `${escHtml(p.value_basis)} ${fmtMoney(p.value)}` : "no value yet (run a valuation)",
+                 p.type ? escHtml(p.type.replace(/_/g, " ")) + (p.type_basis ? ` (${escHtml(p.type_basis)})` : "") : ""].filter(Boolean).join(" · ");
+  if (!data.buyers.length) {
+    el.innerHTML = `<div class="empty-state text-sm">No buyers cover this area yet — use “Find buyers for this area”.</div>
+      <div class="text-xs text-muted">Matching on: ${basis}</div>`;
+    return;
+  }
+  const top = data.buyers.slice(0, 5);
+  const conf = { high: "badge-success", medium: "badge-warning", low: "badge-neutral" };
+  el.innerHTML = `<div class="text-xs text-muted mb-2">Matching on: ${basis}</div>` + top.map((b, i) => {
+    const contact = [b.phone ? escHtml(fmtPhone(b.phone)) : "", b.email ? escHtml(b.email) : "",
+      safeUrl(b.website) ? `<a href="${escHtml(safeUrl(b.website))}" target="_blank" rel="noopener">website</a>` : "",
+      !b.phone && !b.email && b.mailing_address ? `✉ ${escHtml(b.mailing_address)}` : ""].filter(Boolean).join(" · ");
+    return `<div class="phone-row" style="background:var(--surface);align-items:flex-start">
+      <div style="flex:1">
+        <div class="font-semi">#${i + 1} ${escHtml(b.name)} <span class="badge badge-gold">score ${escHtml(b.score)}</span>
+          ${b.confidence ? `<span class="badge ${conf[b.confidence] || "badge-neutral"}">${escHtml(b.confidence)}</span>` : ""}</div>
+        <div class="text-xs">${(b.reasons || []).map(escHtml).join(" · ")}</div>
+        <div class="text-xs text-muted">${contact || "no contact on file"}${safeUrl(b.source_url) ? ` · <a href="${escHtml(safeUrl(b.source_url))}" target="_blank" rel="noopener">source</a>` : ""}</div>
+      </div>
+    </div>`;
+  }).join("") + (data.total_matched > top.length ? `<div class="text-xs text-muted">+${data.total_matched - top.length} more — all matches are listed in the contract form; <a href="/buyers">open the buyer network</a>.</div>` : "");
+}
+
 async function loadBuyers() {
   const el = document.getElementById("matched-buyers");
   if (!el) return;
   try {
-    const data = await API.get(`/api/buyers/match/${LEAD_ID}`);
-    if (data.buyers.length === 0) {
-      el.innerHTML = '<div class="empty-state text-sm">No buyer matches for this lead\'s buy-box.</div>';
-    } else {
-      el.innerHTML = data.buyers.map((b, i) => `<div class="phone-row" style="background:var(--surface)">
-        <div style="flex:1">
-          <div class="font-semi">#${i+1} ${escHtml(b.name)}</div>
-          <div class="text-xs text-muted">${escHtml(b.company || "")} · ${fmtPhone(escHtml(b.phone))} · ${escHtml(b.target_cities || "")}</div>
-        </div>
-        ${b.rehab_level ? `<span class="badge badge-info">${escHtml(b.rehab_level)}</span>` : ""}
-      </div>`).join("");
-    }
+    renderMatchedBuyers(await API.get(`/api/buyers/match/${LEAD_ID}`));
   } catch (e) {
-    el.innerHTML = '<div class="empty-state text-sm">Run a valuation to match buyers.</div>';
+    el.innerHTML = `<div class="empty-state text-sm">Couldn't load buyer matches: ${escHtml(e.message)}</div>`;
   }
+}
+
+async function findBuyersHere(btn) {
+  if (!confirm("Search the web and county records for cash buyers in this property's area? About a minute, roughly $0.05–0.30 of xAI credit.")) return;
+  btn.disabled = true; btn.textContent = "Searching…";
+  try {
+    const r = await API.post("/api/buyers/find", { lead_id: LEAD_ID });
+    const src = (r.sources || []).map(s => `${s.name}: ${s.status}${s.found ? ` (${s.found})` : ""}`).join(" · ");
+    toast(`${r.added} new buyers, ${r.updated} updated · ${src} · $${(r.cost_usd || 0).toFixed(2)}`, "success");
+    if (r.matches) renderMatchedBuyers(r.matches);
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  btn.disabled = false; btn.textContent = "🔎 Find buyers for this area";
 }
 
 loadLead().then(() => loadBuyers());

@@ -6,15 +6,46 @@
     <div class="page-title">Cash Buyer Network</div>
     <div class="page-subtitle">Send to your top five buyers first, matched by buy box. Then the wider list.</div>
   </div>
-  <button class="btn btn-primary" onclick="addBuyerModal()">+ Add Buyer</button>
+  <div class="flex gap-2">
+    <button class="btn btn-outline" id="find-all" onclick="findAll()">🔎 Find buyers for all markets</button>
+    <button class="btn btn-primary" onclick="addBuyerModal()">+ Add Buyer</button>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Markets <span class="text-xs text-muted" id="markets-status"></span></div>
+  <div class="table-wrap" style="max-height:360px;overflow-y:auto">
+    <table class="data-table">
+      <thead><tr><th>Market</th><th>Properties</th><th>ZIPs</th><th>Buyers covering it</th><th>Last searched</th><th>Status</th><th></th></tr></thead>
+      <tbody id="markets-body"><tr><td colspan="7"><div class="empty-state">Loading…</div></td></tr></tbody>
+    </table>
+  </div>
+  <div class="card-body text-xs text-muted">
+    Finding buyers searches the web (Grok) for local cash buyers — "we buy houses" companies, flippers, landlords,
+    iBuyers — and, in Tarrant / Dallas counties, the county parcel records for companies owning 3+ homes in the ZIP.
+    Every buyer keeps its evidence and source. About a minute per market, roughly $0.05–0.30 of xAI credit.
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="search-box"><input type="text" id="search" placeholder="Search buyer, city, ZIP…" oninput="renderBuyers()"></div>
+  <select class="form-select" id="filter-source" style="width:auto" onchange="renderBuyers()">
+    <option value="">All sources</option>
+    <option value="network">Your network</option>
+    <option value="web_research">Web research</option>
+    <option value="county_parcels">County parcel records</option>
+  </select>
+  <select class="form-select" id="filter-conf" style="width:auto" onchange="renderBuyers()">
+    <option value="">Any confidence</option><option value="high">High</option><option value="medium">Medium+</option>
+  </select>
 </div>
 
 <div class="card">
-  <div class="card-header">Buyer Network (ranked)</div>
+  <div class="card-header">Buyer Network (ranked) <span class="text-xs text-muted" id="buyers-count"></span></div>
   <div class="table-wrap">
     <table class="data-table">
-      <thead><tr><th>#</th><th>Name</th><th>Company</th><th>Phone</th><th>Markets</th><th>Price Band</th><th>Beds</th><th>Rehab</th><th>Action</th></tr></thead>
-      <tbody id="buyers-body"><tr><td colspan="9"><div class="empty-state">Loading…</div></td></tr></tbody>
+      <thead><tr><th>#</th><th>Buyer</th><th>Contact</th><th>Markets</th><th>Buy box</th><th>Evidence</th><th>Found</th></tr></thead>
+      <tbody id="buyers-body"><tr><td colspan="7"><div class="empty-state">Loading…</div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -22,26 +53,147 @@
 
 {% block scripts %}
 <script>
+const BUYER_TYPES = { investor_company: "Investor company", portfolio_owner: "Portfolio owner", flipper: "Flipper",
+  landlord: "Landlord", ibuyer: "iBuyer", wholesaler: "Wholesaler", fund: "Fund" };
+const SOURCES = { web_research: "Web research", county_parcels: "County parcel records", network: "Your network" };
+const CONF = { high: "badge-success", medium: "badge-warning", low: "badge-neutral" };
+const CONF_RANK = { high: 3, medium: 2, low: 1 };
+let _buyers = [], _markets = [];
+
+function linkOrText(url, label) {
+  const u = safeUrl(url);
+  return u ? `<a href="${escHtml(u)}" target="_blank" rel="noopener">${escHtml(label)}</a>` : escHtml(label);
+}
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; } }
+function priceBand(b) {
+  if (b.min_price == null && b.max_price == null) return "";
+  return `${fmtMoneyK(b.min_price)} – ${fmtMoneyK(b.max_price)}`;
+}
+
+function buyerRow(b) {
+  const type = b.buyer_type ? `<span class="badge badge-info">${escHtml(BUYER_TYPES[b.buyer_type] || b.buyer_type)}</span>` : "";
+  const conf = b.confidence ? `<span class="badge ${CONF[b.confidence] || "badge-neutral"}">${escHtml(b.confidence)}</span>` : "";
+  const contact = [
+    b.phone ? `<div class="col-mono">${escHtml(fmtPhone(b.phone))}</div>` : "",
+    b.email ? `<div class="text-xs">${escHtml(b.email)}</div>` : "",
+    safeUrl(b.website) ? `<div class="text-xs">${linkOrText(b.website, hostOf(b.website) || "website")}</div>` : "",
+    b.mailing_address ? `<div class="text-xs text-muted">✉ ${escHtml(b.mailing_address)}</div>` : "",
+  ].join("") || '<span class="text-muted">—</span>';
+  const markets = [
+    fmtCityState(b.target_cities, b.target_states),
+    b.target_zips ? `<div class="text-xs text-muted">ZIPs ${escHtml(b.target_zips.split(",").join(", "))}</div>` : "",
+  ].join("") || "—";
+  const box = [
+    priceBand(b) ? `<div>${priceBand(b)}</div>` : "",
+    b.property_types ? `<div class="text-xs">${escHtml(b.property_types.split(",").map(t => t.replace(/_/g, " ")).join(", "))}</div>` : "",
+    b.min_beds != null || b.max_beds != null ? `<div class="text-xs">${escHtml(b.min_beds ?? "—")}–${escHtml(b.max_beds ?? "—")} beds</div>` : "",
+    b.rehab_level ? `<span class="badge badge-info">${escHtml(b.rehab_level)}</span>` : "",
+    b.properties_owned ? `<div class="text-xs text-muted">owns ${escHtml(b.properties_owned)} parcels on record</div>` : "",
+  ].join("") || "—";
+  const lines = (b.evidence || "").split("\n").filter(Boolean);
+  const ev = lines.length ? `<details><summary class="text-xs">${escHtml(lines[0].slice(0, 140))}${lines[0].length > 140 || lines.length > 1 ? "…" : ""}</summary>
+      <div class="text-xs" style="white-space:pre-wrap;max-width:460px">${escHtml(lines.join("\n"))}</div></details>` : "";
+  const src = `<div class="text-xs text-muted">${escHtml(SOURCES[b.source] || b.source || "network")}${safeUrl(b.source_url) ? ` · ${linkOrText(b.source_url, "source")}` : ""}${b.last_purchase ? ` · last deed ${escHtml(b.last_purchase)}` : ""}</div>`;
+  return `<tr>
+    <td class="col-mono">${escHtml(b.ranking)}</td>
+    <td><div class="font-semi">${escHtml(b.name)}</div>${b.company && b.company !== b.name ? `<div class="text-xs text-muted">${escHtml(b.company)}</div>` : ""}<div>${type} ${conf}</div></td>
+    <td>${contact}</td>
+    <td>${markets}</td>
+    <td>${box}</td>
+    <td style="max-width:480px">${ev}${src}</td>
+    <td class="text-xs">${b.found_at ? fmtDate(b.found_at) : "—"}</td>
+  </tr>`;
+}
+
+function renderBuyers() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const src = document.getElementById("filter-source").value;
+  const conf = document.getElementById("filter-conf").value;
+  const rows = _buyers.filter(b => {
+    if (src && (["web_research", "county_parcels"].includes(b.source) ? b.source : "network") !== src) return false;
+    if (conf && (CONF_RANK[b.confidence] || 0) < CONF_RANK[conf]) return false;
+    if (!q) return true;
+    return [b.name, b.company, b.target_cities, b.target_states, b.target_zips, b.mailing_address, b.website]
+      .some(x => (x || "").toLowerCase().includes(q));
+  });
+  const body = document.getElementById("buyers-body");
+  document.getElementById("buyers-count").textContent = `${rows.length} of ${_buyers.length}`;
+  body.innerHTML = rows.length ? rows.map(buyerRow).join("")
+    : `<tr><td colspan="7"><div class="empty-state"><div class="icon">♛</div>${_buyers.length ? "No buyers match the filters." : "No buyers yet — find buyers for your markets above."}</div></td></tr>`;
+}
+
 async function loadBuyers() {
+  try { _buyers = await API.get("/api/buyers"); renderBuyers(); }
+  catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function marketStatus(m) {
+  const errs = Object.entries(m.errors || {});
+  if (errs.length) return `<span class="badge badge-danger" title="${escHtml(errs.map(([k, v]) => `${k}: ${v}`).join("\n"))}">error</span>`;
+  if (!m.last_searched) return '<span class="badge badge-warning">not searched</span>';
+  if (m.due) return '<span class="badge badge-warning">due</span>';
+  return '<span class="badge badge-success">searched</span>';
+}
+
+async function loadMarkets() {
   try {
-    const buyers = await API.get("/api/buyers");
-    const body = document.getElementById("buyers-body");
-    if (buyers.length === 0) {
-      body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">♛</div>No buyers yet.</div></td></tr>';
-    } else {
-      body.innerHTML = buyers.map((b, i) => `<tr>
-        <td class="col-mono">${escHtml(b.ranking)}</td>
-        <td class="font-semi">${escHtml(b.name)}</td>
-        <td>${escHtml(b.company) || "—"}</td>
-        <td class="col-mono">${escHtml(fmtPhone(b.phone))}</td>
-        <td>${fmtCityState(b.target_cities, b.target_states) || "—"}</td>
-        <td class="col-num">${fmtMoneyK(b.min_price)} – ${fmtMoneyK(b.max_price)}</td>
-        <td class="col-mono">${escHtml(b.min_beds) || "—"}-${escHtml(b.max_beds) || "—"}</td>
-        <td><span class="badge badge-info">${escHtml(b.rehab_level) || "—"}</span></td>
-        <td><button class="btn btn-outline btn-sm" onclick="location.href='/contracts'">Contracts</button></td>
-      </tr>`).join("");
-    }
+    const d = await API.get("/api/buyers/markets");
+    _markets = d.markets;
+    document.getElementById("markets-status").textContent = `· ${_markets.length} markets · ${d.due} due`;
+    document.getElementById("markets-body").innerHTML = _markets.length ? _markets.map((m, i) => `<tr>
+      <td class="font-semi">${fmtCityState(m.city, m.state)}${m.county ? `<div class="text-xs text-muted">${escHtml(m.county)} County${m.parcel_layer ? " · parcel records" : ""}</div>` : ""}</td>
+      <td class="col-num">${escHtml(m.properties)}</td>
+      <td class="text-xs">${escHtml((m.zips || []).join(", ")) || "—"}</td>
+      <td>${escHtml(m.buyers)}${Object.keys(m.buyers_by_source || {}).length ? `<div class="text-xs text-muted">${Object.entries(m.buyers_by_source).map(([s, n]) => `${escHtml(SOURCES[s] || s)} ${escHtml(n)}`).join(" · ")}</div>` : ""}</td>
+      <td class="text-xs">${m.last_searched ? fmtDate(m.last_searched) : "—"}</td>
+      <td>${marketStatus(m)}</td>
+      <td><button class="btn btn-outline btn-sm" id="find-m-${i}" onclick="findMarket(${i})">Find</button></td>
+    </tr>`).join("") : '<tr><td colspan="7"><div class="empty-state text-sm">No active properties.</div></td></tr>';
   } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function runSummary(r) {
+  const src = (r.sources || []).map(s => `${s.name}: ${s.status}${s.found ? ` (${s.found})` : ""}`).join(" · ");
+  return `${r.market.city}, ${r.market.state}: ${r.added} new, ${r.updated} updated · ${src} · $${(r.cost_usd || 0).toFixed(2)}`;
+}
+
+async function findMarket(i) {
+  const m = _markets[i];
+  const btn = document.getElementById(`find-m-${i}`);
+  btn.disabled = true; btn.textContent = "Searching…";
+  try {
+    const r = await API.post("/api/buyers/find", { city: m.city, state: m.state, zips: m.zips });
+    toast(runSummary(r), "success");
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  btn.disabled = false; btn.textContent = "Find";
+  loadMarkets(); loadBuyers();
+}
+
+let _findAllRunning = false;
+async function findAll() {
+  const btn = document.getElementById("find-all");
+  if (_findAllRunning) { _findAllRunning = false; btn.textContent = "Stopping after this market…"; return; }
+  const d = await API.get("/api/buyers/markets").catch(() => null);
+  if (d && d.due === 0) { toast("Every market was searched in the last 30 days. Use a market's Find button to search it again.", ""); return; }
+  if (!confirm(`Find cash buyers for ${d ? d.due : "all"} markets? About a minute each, roughly $0.05–0.30 of xAI credit per market.`)) return;
+  _findAllRunning = true;
+  let done = 0, added = 0, cost = 0;
+  const seen = new Set();
+  while (_findAllRunning) {
+    btn.textContent = `⏸ Stop (${done} markets, ${added} new buyers, $${cost.toFixed(2)})`;
+    let r;
+    try { r = await API.post("/api/buyers/find-all", { limit: 1 }); }
+    catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); break; }
+    const fresh = r.processed.filter(x => !seen.has(x.market.key));
+    fresh.forEach(x => { seen.add(x.market.key); if (x.error) toast(`${x.market.city}, ${x.market.state}: ${x.error}`, "error"); });
+    done += fresh.length; cost += r.cost_usd;
+    added += fresh.reduce((a, x) => a + (x.added || 0), 0);
+    loadMarkets(); loadBuyers();
+    if (!fresh.length || r.remaining === 0) break;
+  }
+  _findAllRunning = false;
+  btn.textContent = "🔎 Find buyers for all markets";
+  toast(`Searched ${done} markets · ${added} new buyers · $${cost.toFixed(2)}`, "success");
 }
 
 function addBuyerModal() {
@@ -55,6 +207,10 @@ function addBuyerModal() {
     <div class="grid-2">
       <div class="form-group"><label class="form-label">Target States</label><input class="form-input" id="b-states" value="TX"></div>
       <div class="form-group"><label class="form-label">Target Cities</label><input class="form-input" id="b-cities" placeholder="Houston,Dallas"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Target ZIPs</label><input class="form-input" id="b-zips" placeholder="76119,76105"></div>
+      <div class="form-group"><label class="form-label">Property types</label><input class="form-input" id="b-types" placeholder="single_family,land"></div>
     </div>
     <div class="grid-2">
       <div class="form-group"><label class="form-label">Min Price</label><input class="form-input" id="b-minp" type="number"></div>
@@ -73,28 +229,32 @@ function addBuyerModal() {
 }
 
 async function submitBuyer() {
+  const val = id => document.getElementById(id).value.trim();
   const body = {
-    name: document.getElementById("b-name").value,
-    company: document.getElementById("b-company").value || null,
-    phone: document.getElementById("b-phone").value || null,
-    email: document.getElementById("b-email").value || null,
-    target_states: document.getElementById("b-states").value || null,
-    target_cities: document.getElementById("b-cities").value || null,
-    min_price: parseFloat(document.getElementById("b-minp").value) || null,
-    max_price: parseFloat(document.getElementById("b-maxp").value) || null,
-    min_beds: parseInt(document.getElementById("b-minb").value) || null,
-    max_beds: parseInt(document.getElementById("b-maxb").value) || null,
-    rehab_level: document.getElementById("b-rehab").value || null,
-    ranking: parseInt(document.getElementById("b-rank").value) || 10,
+    name: val("b-name"),
+    company: val("b-company") || null,
+    phone: val("b-phone") || null,
+    email: val("b-email") || null,
+    target_states: val("b-states") || null,
+    target_cities: val("b-cities") || null,
+    target_zips: val("b-zips") || null,
+    property_types: val("b-types") || null,
+    min_price: parseFloat(val("b-minp")) || null,
+    max_price: parseFloat(val("b-maxp")) || null,
+    min_beds: parseInt(val("b-minb")) || null,
+    max_beds: parseInt(val("b-maxb")) || null,
+    rehab_level: val("b-rehab") || null,
+    ranking: parseInt(val("b-rank")) || 10,
   };
   if (!body.name) { toast("Name required", "error"); return; }
   try {
     await API.post("/api/buyers", body);
     document.querySelector(".modal-overlay").remove();
     toast("Buyer added", "success");
-    loadBuyers();
+    loadBuyers(); loadMarkets();
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
+loadMarkets();
 loadBuyers();
 </script>
 {% endblock %}

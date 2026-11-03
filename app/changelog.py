@@ -19,9 +19,25 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "3.2.0"
+CURRENT_VERSION = "3.3.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.3.0",
+        "date": "2026-11-03",
+        "title": "Find cash buyers for your properties",
+        "sections": {
+            "Added": [
+                "Buyer finder: finds real cash buyers in each property's market from two sources — investor companies that publicly buy there ('we buy houses' firms, flippers, investor-landlords, iBuyers), with the business phone / email / website checked on their own page; and portfolio investors from county appraisal records (companies owning 3+ homes in the same ZIP with an out-of-area mailing address, with their holdings count, price band, and latest purchase). Every buyer shows why we think they buy and where we found them.",
+                "Cash Buyers page: market coverage (properties, buyers found, last searched), 'Find buyers for all markets' with progress, filters, and each buyer's type, contact, buy box, evidence and source.",
+                "Property page → Matched Buyers: the best-fitting buyers with a score and the reasons ('owns 12 homes in 76119', 'price band fits', 'bought in the last year'), plus 'Find buyers for this area'.",
+            ],
+            "Fixed": [
+                "Property pages failed to load (version 3.2.0 removed the property brief they read).",
+                "AI Test Call's property brief failed to load since the Leads → Properties rename.",
+            ],
+        },
+    },
     {
         "version": "3.2.0",
         "date": "2026-11-03",

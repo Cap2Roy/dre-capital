@@ -1,4 +1,12 @@
-"""Buyers router: buyer network + buy-box matching."""
+"""Buyers router: buyer network, buy-box matching and the buyer finder.
+
+- ``/match/{lead_id}``: buyers covering a property's area, with score + reasons.
+- ``/find``: find buyers for one property's area (``lead_id``) or a market (``city`` + ``state``).
+  Grok research + county parcel query take a minute or two.
+- ``/find-all``: search the next due market(s) of active properties (never searched or older than
+  30 days); the UI calls it until ``remaining`` is 0.
+- ``/markets``: coverage per market (properties, buyers covering it, last search).
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,15 +15,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Buyer, Lead, TitleCompany, Valuation
-from app.schemas import BuyerCreate, BuyerOut, TitleCompanyCreate, TitleCompanyOut
-from app.services.buyers import match_buyers_for_lead
+from app.schemas import (BuyerCreate, BuyerFindAllRequest, BuyerFindRequest, BuyerMatchOut, BuyerOut,
+                         TitleCompanyCreate, TitleCompanyOut)
+from app.services import buyer_finder
+from app.services.buyers import lead_property_type, lead_value, rank_buyers_for_lead
 
 router = APIRouter(prefix="/api/buyers", tags=["buyers"])
 
 
 @router.get("", response_model=list[BuyerOut])
 def list_buyers(db: Session = Depends(get_db)):
-    return db.execute(select(Buyer).order_by(Buyer.ranking.asc())).scalars().all()
+    return db.execute(select(Buyer).order_by(Buyer.ranking.asc(), Buyer.created_at.desc())).scalars().all()
 
 
 @router.post("", response_model=BuyerOut, status_code=201)
@@ -27,21 +37,69 @@ def create_buyer(payload: BuyerCreate, db: Session = Depends(get_db)):
     return buyer
 
 
+def _latest_valuation(db: Session, lead_id: str) -> Valuation | None:
+    return db.execute(
+        select(Valuation).where(Valuation.lead_id == lead_id).order_by(Valuation.created_at.desc())
+    ).scalars().first()
+
+
+def _matches(db: Session, lead: Lead) -> dict:
+    val = _latest_valuation(db, lead.id)
+    ranked = rank_buyers_for_lead(db, lead, val)
+    value, what = lead_value(lead, val)
+    kind, kind_why = lead_property_type(lead)
+    return {
+        "buyers": [BuyerMatchOut(**BuyerOut.model_validate(m.buyer).model_dump(), score=m.score,
+                                 reasons=m.reasons).model_dump(mode="json") for m in ranked],
+        "total_matched": len(ranked),
+        "property": {"value": value, "value_basis": what or None, "type": kind, "type_basis": kind_why or None},
+    }
+
+
 @router.get("/match/{lead_id}")
 def match_for_lead(lead_id: str, db: Session = Depends(get_db)):
-    """Find buyers whose buy-box matches a lead. Top 5 first per the manual."""
+    """Buyers covering this property's area, best first (score + reasons). Top 5 first per the manual."""
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Property not found")
-    val = db.execute(
-        select(Valuation).where(Valuation.lead_id == lead_id)
-        .order_by(Valuation.created_at.desc())
-    ).scalars().first()
-    buyers = match_buyers_for_lead(db, lead, val)
-    return {
-        "buyers": [BuyerOut.model_validate(b).model_dump() for b in buyers[:5]],
-        "total_matched": len(buyers),
-    }
+    return _matches(db, lead)
+
+
+@router.post("/find")
+def find_buyers(payload: BuyerFindRequest, db: Session = Depends(get_db)):
+    """Run the buyer finder for a property's area or a market; returns the run + (for a property) matches."""
+    try:
+        if payload.lead_id:
+            lead = db.get(Lead, payload.lead_id)
+            if not lead:
+                raise HTTPException(404, "Property not found")
+            result = buyer_finder.find_buyers_for_lead(db, lead)
+        elif payload.city and payload.state:
+            lead = None
+            result = buyer_finder.find_buyers_for_market(db, payload.city, payload.state, payload.zips)
+        else:
+            raise HTTPException(422, "Send lead_id, or city and state.")
+    except buyer_finder.BuyerFinderError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
+    db.commit()
+    if lead is not None:
+        db.refresh(lead)
+        result["matches"] = _matches(db, lead)
+    return result
+
+
+@router.post("/find-all")
+def find_all_markets(payload: BuyerFindAllRequest, db: Session = Depends(get_db)):
+    """Search the next ``limit`` due markets; call again until ``remaining`` is 0."""
+    return buyer_finder.find_all(db, payload.limit)
+
+
+@router.get("/markets")
+def market_coverage(db: Session = Depends(get_db)):
+    """Per market of active properties: properties, buyers covering it, last search, due or not."""
+    rows = buyer_finder.market_coverage(db)
+    return {"markets": rows, "due": sum(1 for r in rows if r["due"])}
 
 
 # ── Sourcing overview ────────────────────────────────────────────────────────

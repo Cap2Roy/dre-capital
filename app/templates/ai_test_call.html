@@ -183,7 +183,7 @@ async function showLeadBrief(leadId, boxId) {
   const box = document.getElementById(boxId);
   if (!leadId) { box.innerHTML = ""; return; }
   box.innerHTML = '<div class="text-sm text-muted">Loading property…</div>';
-  try { box.innerHTML = renderPropertyBrief(await API.get(`/api/properties/${leadId}/brief`), { compact: true }); }
+  try { box.innerHTML = renderPropertyBrief(await API.get(`/api/leads/${leadId}/brief`), { compact: true }); }
   catch (e) { box.innerHTML = `<div class="text-sm text-danger">${escHtml(e.message)}</div>`; }
 }
 

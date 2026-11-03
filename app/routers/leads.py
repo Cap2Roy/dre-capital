@@ -267,6 +267,13 @@ def _lead_or_404(db: Session, lead_id: str) -> Lead:
     return lead
 
 
+@router.get("/{lead_id}/brief")
+def lead_brief(lead_id: str, db: Session = Depends(get_db)):
+    """Everything the dialer / AI agent needs: value, tax, debt, MLS status, photo, number checks."""
+    from app.services.property_data import brief
+    return brief(db, _lead_or_404(db, lead_id))
+
+
 @router.post("/{lead_id}/property-data")
 def refresh_property_data(lead_id: str, request: Request, db: Session = Depends(get_db)):
     """Fill this property's empty fields from RentCast (when active) and free public sources — Census

@@ -329,6 +329,19 @@ class BuyerOut(ORMBase):
     active: bool
     source: Optional[str] = None
     title_company_id: Optional[str] = None
+    buyer_type: Optional[str] = None
+    target_zips: Optional[str] = None
+    property_types: Optional[str] = None
+    website: Optional[str] = None
+    mailing_address: Optional[str] = None
+    evidence: Optional[str] = None
+    properties_owned: Optional[int] = None
+    last_purchase: Optional[str] = None
+    source_url: Optional[str] = None
+    confidence: Optional[str] = None
+    found_at: Optional[UTCDateTime] = None
+    notes: Optional[str] = None
+
 
 class BuyerCreate(BaseModel):
     name: str
@@ -337,6 +350,8 @@ class BuyerCreate(BaseModel):
     email: Optional[str] = None
     target_states: Optional[str] = None
     target_cities: Optional[str] = None
+    target_zips: Optional[str] = None
+    property_types: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     min_beds: Optional[int] = None
@@ -344,7 +359,33 @@ class BuyerCreate(BaseModel):
     rehab_level: Optional[str] = None
     ranking: int = 10
     source: Optional[str] = None
+    buyer_type: Optional[str] = None
+    website: Optional[str] = None
+    mailing_address: Optional[str] = None
+    notes: Optional[str] = None
     title_company_id: Optional[str] = None
+
+
+class BuyerMatchOut(BuyerOut):
+    score: int
+    reasons: list[str] = []
+
+
+class BuyerFindRequest(BaseModel):
+    """Find buyers for one property's area (``lead_id``) or for a market (``city`` + ``state``)."""
+    lead_id: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zips: list[str] = []
+
+
+class BuyerFindAllRequest(BaseModel):
+    limit: int = 1
+
+    @field_validator("limit")
+    @classmethod
+    def _limit(cls, v: int) -> int:
+        return max(1, min(v, 3))
 
 
 # ── Title companies (buyer-sourcing partners) ───────────────────────────────
