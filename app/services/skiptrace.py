@@ -1,109 +1,64 @@
 """Skip tracing + DNC compliance.
 
-Skip tracing matches the owner of record to phone numbers through a data
-vendor.  The manual:
+Skip tracing matches the owner of record to phone numbers. The manual:
 
   * Trace the owner of record, not the address.
   * For an LLC, pull the member from the Secretary of State, then trace.
-  * Expect 2–5 numbers and a 70–80% hit rate; ~1/3 stale.
-  * Scrub every list against the federal DNC registry; flagged → mail only.
+  * Scrub every number against the federal DNC registry; flagged → mail only.
   * Honor opt-outs instantly and log them.
 
-The provider is pluggable: ``SKIPTRACE_PROVIDER=mock`` (default) returns a
-deterministic synthetic result so the pipeline runs with no external key.
+``skip_trace_lead`` runs the real phone finder (``app.services.owner_phones``):
+skip-trace APIs (with their own DNC scrub), public web research and the
+property's sale page. It never makes numbers up.
+
+``seed_demo_phones`` exists only for ``python -m app.seed`` (local demo data):
+it writes clearly fake numbers with ``source="demo"`` and must never run on
+real properties.
 """
 from __future__ import annotations
 
 import hashlib
-import random
-from typing import Optional
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Lead, Phone, PhoneQuality
 from app.timeutil import utcnow
 
-# A small, stable fake DNC "registry" for the mock provider.  In production
-# this is the federal DNC list scrub.  Numbers whose last 4 digits hash into
-# this set are treated as DNC for demonstration of the compliance path.
-_DNC_SEEDS = {"0000", "1111", "1234", "9999", "4321", "7777"}
+
+def skip_trace_lead(db: Session, lead: Lead) -> dict:
+    """Find and store real phone numbers for ``lead`` (see ``owner_phones.find_owner_phones``)."""
+    from app.services.owner_phones import find_owner_phones
+    return find_owner_phones(db, lead)
 
 
-def _dnc_check(number: str) -> bool:
-    """Mock DNC registry check.  Production: scrub against federal list."""
-    last4 = number[-4:] if len(number) >= 4 else number
-    return last4 in _DNC_SEEDS
+# Demo-only DNC hits: numbers ending in these digits are flagged so the seeded demo shows the
+# compliance path. Not a registry — real DNC status only comes from a skip-trace provider's scrub.
+_DEMO_DNC_LAST4 = {"0000", "1111", "1234", "9999", "4321", "7777"}
 
 
-def _gen_numbers(seed_name: str, count: int) -> list[str]:
-    """Deterministically generate `count` fake US phone numbers from a name."""
-    h = hashlib.sha256(seed_name.encode()).digest()
-    nums = []
-    for i in range(count):
-        npa = 200 + (h[i] % 600)          # 200-799
-        nxx = 200 + (h[i + 1] % 600)
-        # vary last 4 by index so some land on DNC seeds
-        last4_int = (h[i + 2] * 7 + i * 31) % 10000
-        last4 = f"{last4_int:04d}"
-        nums.append(f"+1{npa}{nxx}{last4[:4]}")
-    return nums
-
-
-def skip_trace_lead(db: Session, lead: Lead) -> list[Phone]:
-    """Skip trace a lead's owner of record and persist phone numbers.
-
-    Returns the list of Phone rows (including pre-existing ones).
-    Idempotent: will not duplicate numbers already on the lead.
-    """
-    # If lead already has phones, return them (skip tracing already done).
-    existing = db.execute(select(Phone).where(Phone.lead_id == lead.id)).scalars().all()
-    if existing:
-        return list(existing)
-
-    provider = _get_provider()
-    records = provider(lead)
-
+def seed_demo_phones(db: Session, lead: Lead) -> list[Phone]:
+    """Local demo seeding only: 0 or 2–5 deterministic fake numbers per demo lead (source="demo")."""
+    if lead.phones:
+        return list(lead.phones)
+    seed = lead.owner_name or lead.property_address
+    h = hashlib.sha256(seed.encode()).digest()
+    if h[0] % 10 < 2:  # ~20% of demo leads get no numbers
+        return []
     phones: list[Phone] = []
-    for i, rec in enumerate(records):
-        dnc = _dnc_check(rec["number"])
-        quality = PhoneQuality.DNC if dnc else PhoneQuality.UNVERIFIED
-        phone = Phone(
-            lead_id=lead.id,
-            number=rec["number"],
-            quality=quality,
-            dnc_flagged=dnc,
-            is_primary=(i == 0),
-        )
+    for i in range(2 + h[1] % 4):
+        npa = 200 + (h[i] % 600)
+        nxx = 200 + (h[i + 1] % 600)
+        last4 = f"{(h[i + 2] * 7 + i * 31) % 10000:04d}"
+        dnc = last4 in _DEMO_DNC_LAST4
+        phone = Phone(lead_id=lead.id, number=f"+1{npa}{nxx}{last4}", is_primary=(i == 0),
+                      quality=PhoneQuality.DNC if dnc else PhoneQuality.UNVERIFIED, dnc_flagged=dnc,
+                      role="owner", source="demo", confidence="low",
+                      note="Demo data (python -m app.seed) — not a real number.")
         db.add(phone)
+        lead.phones.append(phone)
         phones.append(phone)
     db.flush()
     return phones
-
-
-def _get_provider():
-    from app.config import get_settings
-    provider = get_settings().skiptrace_provider.lower()
-    if provider == "mock":
-        return _mock_provider
-    # Real providers (Twilio Lookup, BeenVerified, etc.) would plug in here.
-    return _mock_provider
-
-
-def _mock_provider(lead: Lead) -> list[dict]:
-    """Deterministic mock: 2–5 numbers, ~70-80% hit rate, ~1/3 stale.
-
-    For LLC owners we still return numbers (in production, first pull the
-    member from the SoS, then trace that person).
-    """
-    seed = lead.owner_name or lead.property_address
-    h = hashlib.sha256(seed.encode()).digest()
-    # 70-80% hit rate: ~20% of leads get no numbers.
-    if h[0] % 10 < 2:
-        return []
-    count = 2 + (h[1] % 4)  # 2-5 numbers
-    raw = _gen_numbers(seed, count)
-    return [{"number": n} for n in raw]
 
 
 def mark_opted_out(db: Session, phone: Phone) -> Phone:

@@ -418,3 +418,9 @@ async function runPropertyScan(leadId, btn) {
     if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }
+
+/** Only http(s) links from scraped / third-party data go into href (blocks javascript: URLs). */
+function safeUrl(u) {
+  try { const x = new URL(String(u || "")); return x.protocol === "https:" || x.protocol === "http:" ? x.href : ""; }
+  catch (_) { return ""; }
+}

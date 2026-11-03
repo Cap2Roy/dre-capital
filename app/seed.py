@@ -25,7 +25,7 @@ from app.models import (
     ScrapeSource, Setting, SourceList, TitleCompany, User,
 )
 from app.services.stacking import add_lead_to_list, recompute_stack_depths
-from app.services.skiptrace import skip_trace_lead
+from app.services.skiptrace import seed_demo_phones
 from app.services.valuation import mock_comps_for_lead, run_valuation
 from app.services.buyers import match_buyers_for_lead
 from app.timeutil import utcnow
@@ -212,7 +212,7 @@ def run() -> None:
 
         # Skip trace all leads (mock provider)
         for lead in leads:
-            skip_trace_lead(db, lead)
+            seed_demo_phones(db, lead)
         db.flush()
 
         # Mark a couple phones as opted-out to demo compliance

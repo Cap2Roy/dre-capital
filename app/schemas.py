@@ -45,6 +45,35 @@ class PhoneOut(ORMBase):
     dnc_flagged: bool
     opted_out: bool
     is_primary: bool
+    role: str = "owner"
+    source: Optional[str] = None
+    source_url: Optional[str] = None
+    confidence: Optional[str] = None
+    line_type: Optional[str] = None
+    contact_name: Optional[str] = None
+    note: Optional[str] = None
+    dnc_checked_at: Optional[UTCDateTime] = None
+    owner_confirmed_at: Optional[UTCDateTime] = None
+
+
+class ListingOut(ORMBase):
+    id: str
+    site: str
+    site_label: str
+    kind: str
+    url: str
+    status: Optional[str] = None
+    price: Optional[float] = None
+    price_label: Optional[str] = None
+    listed_date: Optional[str] = None
+    days_on_market: Optional[int] = None
+    agent_name: Optional[str] = None
+    agent_phone: Optional[str] = None
+    agent_company: Optional[str] = None
+    check: str = "unchecked"
+    source: str = "web"
+    note: Optional[str] = None
+    found_at: Optional[UTCDateTime] = None
 
 class CompOut(ORMBase):
     id: str
@@ -161,7 +190,11 @@ class LeadOut(ORMBase):
     created_at: UTCDateTime
     archived_at: Optional[UTCDateTime] = None
     archive_reason: Optional[str] = None
+    contact_checked_at: Optional[UTCDateTime] = None
+    listings_checked_at: Optional[UTCDateTime] = None
+    research_note: Optional[str] = None
     phones: list[PhoneOut] = []
+    listings: list[ListingOut] = []
     comps: list[CompOut] = []
     valuations: list[ValuationOut] = []
     calls: list[CallOut] = []

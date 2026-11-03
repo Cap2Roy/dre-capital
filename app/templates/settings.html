@@ -206,6 +206,17 @@
       <div class="flex gap-2 mt-4">
         <button type="button" class="btn btn-primary" onclick="savePropertySources()">Save Property Data Sources</button>
       </div>
+      <h4 class="mt-6 mb-2">Phone finder sources <span id="pfs-status" class="badge badge-neutral">Checking…</span></h4>
+      <p class="text-sm text-muted mb-4">
+        <strong>Find phones</strong> runs every enabled source below for a property. Owner numbers come from skip-trace
+        APIs (with their own federal DNC scrub) and from public pages Grok cites — each number keeps its source link and a
+        confidence grade. Numbers printed on the property's sale page (IRS, Treasury, USDA, FDIC, constable) are stored as
+        agency / listing-agent contacts, never as the owner. Skip-trace keys are the BatchData / RealEstateAPI keys above.
+      </p>
+      <div id="pfs-list" class="table-wrap"></div>
+      <div class="flex gap-2 mt-4">
+        <button type="button" class="btn btn-primary" onclick="savePhoneSources()">Save Phone Finder Sources</button>
+      </div>
     </div>
   </div>
   {% endif %}
@@ -764,6 +775,7 @@ async function savePropertySources() {
   try {
     renderPropertySources(await API.put("/api/property-sources", { sources, model: document.getElementById("psrc-model").value }));
     toast("Property data sources saved", "success");
+    loadPhoneSources();  // shared BatchData / RealEstateAPI keys
   } catch (err) { toast("Error: " + _apiErr(err), "error"); }
 }
 
@@ -773,6 +785,66 @@ async function testPropertySource(id, btn) {
   out.textContent = "Testing…";
   try {
     const r = await API.post(`/api/property-sources/${encodeURIComponent(id)}/test`);
+    out.innerHTML = `<span class="badge ${r.ok ? "badge-success" : "badge-danger"}">${r.ok ? "✓" : "✗"}</span> ${escHtml(r.message)}`;
+  } catch (err) {
+    out.innerHTML = `<span class="badge badge-danger">✗</span> ${escHtml(_apiErr(err))}`;
+  } finally { btn.disabled = false; }
+}
+
+// ── Phone finder sources — admin only ───────────────────────────────────────
+let _pfs = null;
+
+function renderPhoneSources(d) {
+  _pfs = d;
+  const ready = d.sources.filter(s => s.ready).length;
+  const badge = document.getElementById("pfs-status");
+  badge.className = `badge ${ready ? "badge-success" : "badge-warning"}`;
+  badge.textContent = ready ? `${ready} source${ready > 1 ? "s" : ""} on` : "⚠ No source on";
+  const link = (url, text) => /^https?:\/\//.test(url || "") ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer">${escHtml(text)}</a>` : "";
+  const keyLabel = { xai_api_key: "xAI key — agents default", batchdata_api_key: "BatchData key above", realestateapi_api_key: "RealEstateAPI key above" };
+  const rows = d.sources.map(s => {
+    const keyCell = !s.needs_key ? `<span class="badge badge-success">no key needed</span>`
+      : `<span class="badge ${s.key_set ? "badge-success" : "badge-warning"}">${s.key_set ? "key set" : "no key"}</span>
+         <div class="form-hint">${escHtml(keyLabel[s.key_setting] || s.key_setting)}</div>`;
+    const status = s.ready ? `<span class="badge badge-success">on</span>`
+      : s.enabled ? `<span class="badge badge-warning">needs key</span>` : `<span class="badge badge-neutral">off</span>`;
+    return `<tr>
+      <td style="vertical-align:top"><input type="checkbox" id="pfs-on-${escHtml(s.id)}" ${s.enabled ? "checked" : ""} aria-label="Enable ${escHtml(s.name)}"></td>
+      <td style="vertical-align:top;max-width:420px"><strong>${escHtml(s.name)}</strong> ${status}
+        <div class="text-xs">${escHtml(s.description)}</div>
+        ${s.note ? `<div class="text-xs text-muted">${escHtml(s.note)}</div>` : ""}
+        <div class="text-xs">${[link(s.docs_url, "API docs"), link(s.pricing_url, "Pricing")].filter(Boolean).join(" · ")}</div></td>
+      <td style="vertical-align:top;min-width:200px">${keyCell}</td>
+      <td style="vertical-align:top"><button type="button" class="btn btn-outline btn-sm" onclick="testPhoneSource('${escHtml(s.id)}', this)">Test</button>
+        <div class="text-xs mt-2" id="pfs-test-${escHtml(s.id)}"></div></td></tr>`;
+  }).join("");
+  document.getElementById("pfs-list").innerHTML =
+    `<table class="data-table"><thead><tr><th>On</th><th>Source</th><th>API key</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function loadPhoneSources() {
+  if (!document.getElementById("pfs-list")) return;
+  try { renderPhoneSources(await API.get("/api/phone-sources")); }
+  catch (err) { document.getElementById("pfs-status").textContent = "Error"; }
+}
+
+async function savePhoneSources() {
+  if (!_pfs) return;
+  const toggles = {};
+  _pfs.sources.forEach(s => { toggles[s.id] = document.getElementById(`pfs-on-${s.id}`).checked; });
+  try {
+    await API.put("/api/settings", { settings: [{ key: "phone_finder_sources", value: JSON.stringify(toggles) }] });
+    toast("Phone finder sources saved", "success");
+    await loadPhoneSources();
+  } catch (err) { toast("Error: " + _apiErr(err), "error"); }
+}
+
+async function testPhoneSource(id, btn) {
+  const out = document.getElementById(`pfs-test-${id}`);
+  btn.disabled = true;
+  out.textContent = "Testing…";
+  try {
+    const r = await API.post(`/api/phone-sources/${encodeURIComponent(id)}/test`);
     out.innerHTML = `<span class="badge ${r.ok ? "badge-success" : "badge-danger"}">${r.ok ? "✓" : "✗"}</span> ${escHtml(r.message)}`;
   } catch (err) {
     out.innerHTML = `<span class="badge badge-danger">✗</span> ${escHtml(_apiErr(err))}`;
@@ -1223,6 +1295,6 @@ async function deleteFlow(id) {
 // ── Init ───────────────────────────────────────────────────────
 loadSettings();
 loadMyQuo();
-{% if is_admin %}loadUsers(); loadCallFlows(); loadPropertySources();{% endif %}
+{% if is_admin %}loadUsers(); loadCallFlows(); loadPropertySources(); loadPhoneSources();{% endif %}
 </script>
 {% endblock %}

@@ -19,9 +19,26 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "3.0.0"
+CURRENT_VERSION = "3.1.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.1.0",
+        "date": "2026-11-03",
+        "title": "Phone numbers and marketplace listings for every property",
+        "sections": {
+            "Added": [
+                "Find phones & listings (on each property, and 'for all' on Properties): searches for the owner's phone numbers and checks where the property is listed. Runs automatically every morning at 07:00 for newly scanned properties.",
+                "Phone numbers now show who they belong to (owner, listing agent, or sale / agency contact), where they were found with a link, confidence, and line type. Only the owner's own numbers go into the call queue and AI calls. '+ Add number' saves numbers the team gets themselves.",
+                "Sources for numbers: the sale / listing page (USDA, FDIC, IRS, Treasury, constable offices, listing agents), public web research with Grok (kept only when the page ties the number to the owner and the address), and skip-trace providers BatchData and RealEstateAPI (Settings → Property data sources; need a key) — the reliable route to owners' personal numbers, with DNC flags.",
+                "Where it's listed: each property shows the sale page it came from plus any marketplace listings found — Zillow, Redfin, Realtor.com, Trulia, MLS broker sites, Auction.com, Hubzu, Xome, Facebook Marketplace, Craigslist and more — with status, price, listing agent, link, and whether we could re-check the page. Properties list has 'Phones' and 'Listed on' columns.",
+            ],
+            "Changed": [
+                "Numbers are marked 'DNC not checked' until a skip-trace provider scrubs them; AI calls need a real DNC scrub. The old demo skip trace can no longer create numbers for real properties.",
+                "Scan property only trusts sources the search engine actually returned (or that we re-read and confirmed), so a made-up web address can't become a source.",
+            ],
+        },
+    },
     {
         "version": "3.0.0",
         "date": "2026-10-29",

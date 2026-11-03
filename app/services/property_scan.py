@@ -9,7 +9,9 @@ Sources (``CATALOG``; enabled per source in Settings → Property data sources):
   listing portals) and returns structured facts, each with the page URL and a
   verbatim quote. We then:
     1. drop facts without a source URL, absence-only values, and facts citing a
-       URL the search tool never returned or opened (no invented sources);
+       URL the search engine never returned (no invented sources). A page the
+       model only "opened" or cited counts only when step 2 confirms the fact on
+       it: models open and cite made-up portal URLs;
     2. re-read each cited page ourselves (robots.txt-aware, own User-Agent,
        crawl-delay ≥ 1 s per host) and mark the fact ``confirmed`` when the
        quote / value is on the page, ``not_found`` when it isn't, ``unchecked``
@@ -936,6 +938,15 @@ def _touched_urls(resp: dict) -> set[tuple[str, str, str]]:
     return {_url_key(u) for u in urls}
 
 
+def search_result_urls(resp: dict) -> set[tuple[str, str, str]]:
+    """URLs the search engine itself returned (``web_search_call`` sources) — the only URLs that prove a
+    page exists. Pages the model "opened" (``open_page`` actions) or cited (``url_citation``) are NOT
+    included: in tests Grok made up portal URLs (e.g. a Realtor.com id "M87988-12345"), opened them and
+    cited them. Accept such a URL only after our own re-read of the page confirms the value."""
+    return {_url_key(s["url"]) for item in resp.get("output") or [] if item.get("type") == "web_search_call"
+            for s in (item.get("action") or {}).get("sources") or [] if s.get("url")}
+
+
 def _was_touched(url: str, touched: set[tuple[str, str, str]]) -> bool:
     host, path, query = _url_key(url)
     for h, p, q in touched:
@@ -1016,11 +1027,13 @@ def _grok_call(key: str, model: str, t: Target, focus: str) -> tuple[dict, dict]
 
 
 def grok_research(key: str, model: str, t: Target) -> dict:
-    """Records + signals research in parallel; facts validated against the URLs the search tool
-    actually returned/opened, then re-checked on the cited pages. Raises ScanError if both passes fail."""
+    """Records + signals research in parallel; facts validated against the URLs the search engine
+    returned (pages Grok only opened / cited must be confirmed by our re-read), then re-checked on the
+    cited pages. Raises ScanError if both passes fail."""
     with ThreadPoolExecutor(max_workers=len(GROK_FOCUS)) as ex:
         futures = {focus: ex.submit(_grok_call, key, model, t, focus) for focus in GROK_FOCUS}
     facts: list[dict] = []
+    needs_confirm: list[dict] = []   # cited page was opened / cited by the model but never a search result
     seen: set[tuple[str, str, str]] = set()
     dropped = {"no_source": 0, "unvisited_source": 0, "absence": 0, "bad_field": 0}
     summaries, checked, errors = [], [], []
@@ -1041,7 +1054,7 @@ def grok_research(key: str, model: str, t: Target) -> dict:
         if (out.get("summary") or "").strip():
             summaries.append(out["summary"].strip())
         checked += [str(c) for c in out.get("checked") or [] if str(c) not in checked]
-        touched = _touched_urls(resp)
+        touched, results = _touched_urls(resp), search_result_urls(resp)
         for f in out.get("facts") or []:
             if not isinstance(f, dict):
                 continue
@@ -1059,13 +1072,20 @@ def grok_research(key: str, model: str, t: Target) -> dict:
                 dropped["unvisited_source"] += 1
             elif (fld, _norm(value), _url_key(url)[0]) not in seen:  # same value from the same site = one fact
                 seen.add((fld, _norm(value), _url_key(url)[0]))
-                facts.append(_fact(category, fld, value[:300], src="grok",
-                                   source_name=(f.get("source_name") or "")[:120] or urlsplit(url).hostname,
-                                   source_url=url, source_kind=f.get("source_kind") or "other", as_of=f.get("as_of"),
-                                   quote=(f.get("quote") or "")[:300] or None, check="unchecked", official=is_official(url)))
+                fact = _fact(category, fld, value[:300], src="grok",
+                             source_name=(f.get("source_name") or "")[:120] or urlsplit(url).hostname,
+                             source_url=url, source_kind=f.get("source_kind") or "other", as_of=f.get("as_of"),
+                             quote=(f.get("quote") or "")[:300] or None, check="unchecked", official=is_official(url))
+                facts.append(fact)
+                if not _was_touched(url, results):
+                    needs_confirm.append(fact)
     if len(errors) == len(GROK_FOCUS):
         raise ScanError("; ".join(errors))
     verify_on_pages(facts, t)
+    unproven = [f for f in needs_confirm if f["check"] != "confirmed"]
+    if unproven:
+        facts = [f for f in facts if not any(f is u for u in unproven)]
+        dropped["unvisited_source"] += len(unproven)
     return {
         "facts": facts, "summary": " ".join(summaries), "checked": checked[:30], "matched_address": matched,
         "dropped": {k: v for k, v in dropped.items() if v}, "partial_error": "; ".join(errors) or None,

@@ -37,6 +37,7 @@ def list_leads(
         selectinload(Lead.calls),
         selectinload(Lead.followups),
         selectinload(Lead.contracts),
+        selectinload(Lead.listings),
     )
     if q:
         pat = f"%{q}%"

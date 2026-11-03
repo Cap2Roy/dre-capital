@@ -204,7 +204,7 @@ def _annotate(topic: str, lead: Lead, lists: set[ListType], valuation) -> tuple[
         else:
             mode, tip = "optional", "No distress signals on record — only ask if their motivation suggests it."
     elif topic == "callback":
-        callable_numbers = [p.number for p in lead.phones if not p.dnc_flagged and not p.opted_out]
+        callable_numbers = [p.number for p in lead.phones if not p.dnc_flagged and not p.opted_out and (p.role or "owner") == "owner"]
         if callable_numbers:
             known.append(f"Number on file: {callable_numbers[0]}.")
         tip = "Lock a specific callback window before hanging up."

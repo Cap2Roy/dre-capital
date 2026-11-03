@@ -16,13 +16,14 @@ from fastapi.templating import Jinja2Templates
 from app.database import init_db
 from app.changelog import CURRENT_VERSION as __version__
 from app.routers import (
-    agents, ai_calls, auth, buyers, call_flows, calls, contracts, dashboard, importer, leads, live_agent, meetings, messages,
+    agents, ai_calls, auth, buyers, call_flows, calls, contact_research, contracts, dashboard, importer, leads, live_agent,
+    meetings, messages,
     property_scan, scraper, settings, users, valuation,
 )
 from app.services.scheduler import scheduler_loop
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/scraper/auto/cron", "/api/ai-calls/twilio/inbound", "/api/messages/inbound", "/static"}
+PUBLIC_PATHS = {"/login", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/google/login", "/api/auth/google/callback", "/api/auth/google/config", "/api/calls/twilio-status", "/api/calls/quo-webhook", "/api/ai-calls/twilio/status", "/api/scraper/auto/cron", "/api/research/cron", "/api/ai-calls/twilio/inbound", "/api/messages/inbound", "/static"}
 
 
 def _register_quo_webhooks_on_startup() -> None:
@@ -124,7 +125,7 @@ templates.env.filters["wn_method_class"] = lambda m: {
 }.get(m, "badge-neutral")
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, property_scan, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
+for r in (auth, users, settings, dashboard, leads, property_scan, contact_research, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
     app.include_router(r.router)
 
 

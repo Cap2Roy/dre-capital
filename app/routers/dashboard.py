@@ -75,7 +75,7 @@ def call_queue(db: Session = Depends(get_db)):
     ).scalars().all()
     queue = []
     for lead in leads:
-        callable_phones = [p for p in lead.phones if not p.dnc_flagged and not p.opted_out]
+        callable_phones = [p for p in lead.phones if not p.dnc_flagged and not p.opted_out and (p.role or "owner") == "owner"]
         if not callable_phones:
             continue
         queue.append({

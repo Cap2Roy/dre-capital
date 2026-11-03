@@ -63,10 +63,25 @@ def check_phone(db: Session, lead: Lead, phone: Phone, *, for_ai: bool, now_utc:
     else:
         checks.append(_c("belongs", "Number belongs to this lead", "pass"))
 
-    checks.append(_c("dnc", "Not on the Do-Not-Call registry",
-                     "fail" if phone.dnc_flagged or phone.quality == PhoneQuality.DNC else "pass"))
+    if phone.dnc_flagged or phone.quality == PhoneQuality.DNC:
+        checks.append(_c("dnc", "Not on the Do-Not-Call registry", "fail"))
+    elif phone.dnc_checked_at:
+        checks.append(_c("dnc", "Not on the Do-Not-Call registry", "pass", f"Scrubbed {phone.dnc_checked_at:%b %d, %Y}."))
+    else:
+        # Found by public research, not a skip-trace scrub: DNC status unknown.
+        checks.append(_c("dnc", "Not on the Do-Not-Call registry", "fail" if for_ai else "warn",
+                         "Not scrubbed against the DNC registry yet (a skip-trace provider does this)."))
     checks.append(_c("opt_out", "Owner hasn't asked us to stop",
                      "fail" if phone.opted_out or phone.quality == PhoneQuality.OPTED_OUT else "pass"))
+    role = getattr(phone, "role", "owner") or "owner"
+    if role != "owner":
+        checks.append(_c("role", "The owner's own number", "fail" if for_ai else "warn",
+                         f"This is a {'listing agent' if role == 'listing_agent' else 'sale / agency'} contact"
+                         f"{' (' + phone.contact_name + ')' if phone.contact_name else ''}, not the owner."))
+    else:
+        checks.append(_c("role", "The owner's own number", "pass",
+                         (f"Source: {phone.source}" + (f" · {phone.confidence} confidence" if phone.confidence else ""))
+                         if phone.source else ""))
 
     wrong = db.execute(select(Call).where(Call.phone_id == phone.id, Call.outcome == CallOutcome.WRONG_NUMBER)
                        .order_by(Call.created_at.desc()).limit(1)).scalars().first()

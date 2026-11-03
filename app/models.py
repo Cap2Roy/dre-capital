@@ -197,6 +197,10 @@ class Lead(TimestampMixin, Base):
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     archived_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     archive_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Owner phone + marketplace research (last run; results live in phones / listings).
+    contact_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    listings_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    research_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # last run's summary / errors
     # Relations
     list_memberships: Mapped[list["LeadListMembership"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     phones: Mapped[list["Phone"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
@@ -208,6 +212,8 @@ class Lead(TimestampMixin, Base):
     messages: Mapped[list["MessageLog"]] = relationship(back_populates="lead")
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="lead")
     property_record: Mapped[Optional["PropertyRecord"]] = relationship(back_populates="lead", uselist=False, cascade="all, delete-orphan")
+    listings: Mapped[list["MarketplaceListing"]] = relationship(back_populates="lead", cascade="all, delete-orphan",
+                                                               order_by="MarketplaceListing.found_at.desc()")
 
 
 class PropertyRecord(TimestampMixin, Base):
@@ -288,6 +294,17 @@ class Phone(TimestampMixin, Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     # Set when a call confirmed the owner of this lead's property answered this number.
     owner_confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Where the number came from. role: owner (the property owner — the only role the call queue
+    # and AI calls use) | listing_agent | agency (sale/listing contact, e.g. USDA agent, FDIC broker).
+    role: Mapped[str] = mapped_column(String(20), default="owner", index=True)
+    source: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)      # skiptrace:batchdata | web | listing | manual | demo
+    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # high | medium | low
+    line_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)   # mobile | landline | voip | unknown
+    contact_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # whose number (owner / agent name)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Federal DNC status is only known after a real scrub (skip-trace providers return it).
+    dnc_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     lead: Mapped["Lead"] = relationship(back_populates="phones")
 
 
@@ -698,3 +715,29 @@ class PropertyScan(TimestampMixin, Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class MarketplaceListing(TimestampMixin, Base):
+    """Where a property was found listed: a marketplace (Zillow, Redfin, Realtor.com, Auction.com,
+    Facebook Marketplace, …) or the government / sheriff sale page it came from."""
+    __tablename__ = "marketplace_listings"
+    __table_args__ = (UniqueConstraint("lead_id", "url", name="uq_listing_lead_url"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    lead_id: Mapped[str] = mapped_column(String(32), ForeignKey("leads.id", ondelete="CASCADE"), index=True)
+    site: Mapped[str] = mapped_column(String(40), index=True)          # zillow | redfin | realtor | … | treasury | usda | …
+    site_label: Mapped[str] = mapped_column(String(80))                # "Zillow", "U.S. Treasury auction"
+    kind: Mapped[str] = mapped_column(String(16), default="marketplace")  # marketplace | auction | government | mls | classified
+    url: Mapped[str] = mapped_column(Text)
+    status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)  # for_sale | pending | sold | off_market | auction | rental | unknown
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    price_label: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # "List price", "Minimum bid", "Sold"
+    listed_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    days_on_market: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    agent_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    agent_company: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    check: Mapped[str] = mapped_column(String(16), default="unchecked")   # confirmed | unchecked (page couldn't be re-read)
+    source: Mapped[str] = mapped_column(String(32), default="web")        # web (Grok search) | import (our sale source) | rentcast
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    found_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    lead: Mapped["Lead"] = relationship(back_populates="listings")

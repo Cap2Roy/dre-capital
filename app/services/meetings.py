@@ -74,7 +74,7 @@ def send_meeting_reminder(db: Session, meeting: Meeting, sent_by: Optional[str] 
         db.flush()
         return {"sent": False, "reason": "no lead"}
 
-    phone = next((p for p in lead.phones if not p.dnc_flagged and not p.opted_out), None)
+    phone = next((p for p in lead.phones if not p.dnc_flagged and not p.opted_out and (p.role or "owner") == "owner"), None)
     tpl = _reminder_template(db)
     if phone is None or tpl is None:
         meeting.reminder_sent = True

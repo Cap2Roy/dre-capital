@@ -18,9 +18,11 @@ from app.services.skiptrace import is_callable
 
 
 def _callable_phone_for(db: Session, lead_id: str) -> Optional[Phone]:
-    """Return the first callable phone for a lead, or None."""
+    """Return the first callable phone for a lead (the owner's own numbers only — listing-agent and
+    agency contacts are shown on the property, not dialed from the queue), or None."""
     phones = db.execute(
-        select(Phone).where(Phone.lead_id == lead_id)
+        select(Phone).where(Phone.lead_id == lead_id, Phone.role == "owner")
+        .order_by(Phone.is_primary.desc(), Phone.created_at)
     ).scalars().all()
     for p in phones:
         if is_callable(p):

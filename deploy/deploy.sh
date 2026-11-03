@@ -200,8 +200,17 @@ if gcloud scheduler jobs describe "$CRON_JOB" --location "$REGION" --project "$P
 else
   gcloud scheduler jobs create http "$CRON_JOB" "${CRON_ARGS[@]}" --headers "X-Cron-Token=${CRON_TOKEN_VALUE}" >/dev/null
 fi
+# Phones + marketplace listings for properties added by the scan (07:00, after the 06:00 scan).
+RESEARCH_JOB="dre-capital-daily-research"
+RESEARCH_ARGS=(--location "$REGION" --project "$PROJECT_ID" --schedule "0 7 * * *" --time-zone "America/Chicago"
+  --uri "${APP_BASE_URL}/api/research/cron" --http-method POST --attempt-deadline 900s --quiet)
+if gcloud scheduler jobs describe "$RESEARCH_JOB" --location "$REGION" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http "$RESEARCH_JOB" "${RESEARCH_ARGS[@]}" --update-headers "X-Cron-Token=${CRON_TOKEN_VALUE}" >/dev/null
+else
+  gcloud scheduler jobs create http "$RESEARCH_JOB" "${RESEARCH_ARGS[@]}" --headers "X-Cron-Token=${CRON_TOKEN_VALUE}" >/dev/null
+fi
 unset CRON_TOKEN_VALUE
-echo "Daily scan: Cloud Scheduler job ${CRON_JOB} (06:00 America/Chicago)."
+echo "Daily scan: Cloud Scheduler job ${CRON_JOB} (06:00 America/Chicago); research ${RESEARCH_JOB} (07:00)."
 
 # ── Done ─────────────────────────────────────────────────────
 echo ""

@@ -387,6 +387,14 @@ SETTING_DEFS: dict[str, dict] = {
         "env": "PROPERTY_SCAN_MODEL",
         "description": "xAI model for Grok web research in Scan property (default grok-4.3).",
     },
+    # ── Phone finder (app/services/owner_phones.py) ──────────────────────
+    "phone_finder_sources": {
+        "label": "Phone Finder Sources",
+        "category": "internal",
+        "is_secret": False,
+        "env": "",
+        "description": "JSON {source_id: enabled} for the phone finder (Settings → Property data sources → Phone finder sources).",
+    },
     "attom_api_key": {
         "label": "ATTOM Data API Key",
         "category": "property",
