@@ -19,6 +19,9 @@ from app.services.contracts import (
 
 router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 
+STATUSES = ("pending", "signed", "assigned", "closed", "fallen")
+ACTIVE = ("pending", "signed", "assigned")
+
 
 @router.get("", response_model=list[ContractOut])
 def list_contracts(db: Session = Depends(get_db)):
@@ -44,14 +47,26 @@ def create_contract(payload: ContractCreate, lead_id: str = None, db: Session = 
         buyer = db.get(Buyer, payload.buyer_id)
         if not buyer:
             raise HTTPException(404, "Buyer not found")
+    if not payload.contract_price or payload.contract_price <= 0:
+        raise HTTPException(400, "Enter the contract price (your offer to the seller).")
+    if payload.assignment_fee is not None and payload.assignment_fee < 0:
+        raise HTTPException(400, "The assignment fee can't be negative.")
+    if payload.buyer_price is not None and payload.buyer_price < payload.contract_price:
+        raise HTTPException(400, "The buyer price is below your contract price — the deal would lose money.")
+    status = payload.status or "pending"
+    if status not in STATUSES:
+        raise HTTPException(400, f"Status must be one of: {', '.join(STATUSES)}.")
+    active = [c for c in lead.contracts if c.status in ACTIVE]
+    if active and status in ACTIVE:
+        raise HTTPException(409, "This property already has an active contract — mark it fallen or closed first.")
     contract = Contract(
         lead_id=lead_id,
         buyer_id=payload.buyer_id,
         contract_price=payload.contract_price,
         assignment_fee=payload.assignment_fee,
         buyer_price=payload.buyer_price,
-        status=payload.status or "pending",
-        signed_at=utcnow() if payload.status == "signed" else None,
+        status=status,
+        signed_at=utcnow() if status == "signed" else None,
         disclosure_sent=payload.disclosure_sent,
         notes=payload.notes,
     )
@@ -70,8 +85,17 @@ def update_status(contract_id: str, status: str, db: Session = Depends(get_db)):
     contract = db.get(Contract, contract_id)
     if not contract:
         raise HTTPException(404, "Contract not found")
+    if status not in STATUSES:
+        raise HTTPException(400, f"Status must be one of: {', '.join(STATUSES)}.")
+    if status in ACTIVE and contract.status not in ACTIVE and any(
+            c.id != contract.id and c.status in ACTIVE for c in contract.lead.contracts):
+        raise HTTPException(409, "This property already has another active contract.")
     contract.status = status
-    if status == "assigned":
+    if status == "fallen":
+        # The deal fell through: the property goes back to being worked (unless another deal is active).
+        if not any(c.id != contract.id and c.status in ACTIVE for c in contract.lead.contracts):
+            contract.lead.status = LeadStatus.WORKING
+    elif status == "assigned":
         contract.assigned_at = utcnow()
         contract.lead.status = LeadStatus.ASSIGNED
     elif status == "signed":

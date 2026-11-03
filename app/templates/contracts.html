@@ -49,27 +49,58 @@ async function loadContracts() {
         <td>${statusBadge(c.status)}</td>
         <td class="text-sm">${fmtDate(c.signed_at)}</td>
         <td>${c.disclosure_sent ? '<span class="badge badge-success">Sent</span>' : '<span class="badge badge-danger">Not sent</span>'}</td>
-        <td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-outline btn-sm" onclick="showDoc('${c.id}', 'seller')">📄 Seller</button>
+          <button class="btn btn-outline btn-sm" onclick="showDoc('${c.id}', 'buyer')">📄 Buyer</button>
           <select class="form-select btn-sm" style="width:auto; padding:2px 8px" onchange="updateStatus('${c.id}', this.value)">
             <option value="">Update…</option>
-            <option value="signed">Mark Signed</option>
-            <option value="assigned">Mark Assigned</option>
-            <option value="closed">Mark Closed</option>
-            <option value="fallen">Mark Fallen</option>
+            ${["signed", "assigned", "closed", "fallen"].filter(s => s !== c.status).map(s => `<option value="${s}">Mark ${s[0].toUpperCase() + s.slice(1)}</option>`).join("")}
           </select>
         </td>
       </tr>`).join("");
     }
-  } catch (e) { toast("Error: " + e.message, "error"); }
+  } catch (e) { toast("Error: " + e.message.replace(/^\d+\s*/, ""), "error"); }
 }
 
 async function updateStatus(id, status) {
   if (!status) return;
+  if (status === "fallen" && !confirm("Mark this deal as fallen through? The property goes back to Working.")) { loadContracts(); return; }
   try {
     await API.patch(`/api/contracts/${id}/status?status=${status}`);
     toast("Contract updated", "success");
-    loadContracts();
-  } catch (e) { toast("Error: " + e.message, "error"); }
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  loadContracts();
+}
+
+async function showDoc(id, party) {
+  let d;
+  try { d = await API.get(`/api/contracts/${id}/document?party=${party}`); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); return; }
+  openModal(escHtml(d.template_name), `
+    <pre id="doc-text" style="white-space:pre-wrap;font-family:Georgia,serif;font-size:14px;line-height:1.6;background:var(--surface);padding:16px;border-radius:8px;max-height:60vh;overflow:auto">${escHtml(d.document)}</pre>
+    <div class="form-hint">Edit the wording in Settings → Message Templates (${escHtml(d.template_name)}).</div>`,
+    `<button class="btn btn-outline" onclick="closeModal()">Close</button>
+     <button class="btn btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('doc-text').textContent); toast('Copied', 'success')">Copy</button>
+     <button class="btn btn-outline" onclick="printDoc()">🖨 Print / PDF</button>
+     <button class="btn btn-primary" onclick="emailDoc('${id}', '${party}')">✉ Email to ${party}</button>`, { wide: true });
+}
+
+function printDoc() {
+  const w = window.open("", "_blank");
+  if (!w) { toast("Allow pop-ups to print.", "error"); return; }
+  const pre = w.document.createElement("pre");
+  pre.style.cssText = "white-space:pre-wrap;font-family:Georgia,serif;font-size:13pt;line-height:1.6;margin:1in";
+  pre.textContent = document.getElementById("doc-text").textContent;
+  w.document.body.appendChild(pre);
+  w.document.title = "Contract";
+  w.print();
+}
+
+async function emailDoc(id, party) {
+  try {
+    const r = await API.post(`/api/contracts/${id}/send?party=${party}`);
+    toast(`Sent to ${r.to}`, "success"); closeModal();
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
 }
 loadContracts();
 </script>

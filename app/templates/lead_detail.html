@@ -684,17 +684,45 @@ async function submitValuation() {
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
 
-function contractModal() {
+async function contractModal() {
+  let matched = [], all = [];
+  try {
+    [matched, all] = await Promise.all([
+      API.get(`/api/buyers/match/${LEAD_ID}`).then(d => d.buyers || []).catch(() => []),
+      API.get("/api/buyers").catch(() => []),
+    ]);
+  } catch (_) {}
+  const matchedIds = new Set(matched.map(b => b.id));
+  const opt = b => `<option value="${escHtml(b.id)}">${escHtml(b.name)}${b.company ? " — " + escHtml(b.company) : ""}</option>`;
   const html = `
-    <div class="form-group"><label class="form-label">Contract Price (your offer) ($)</label><input class="form-input" id="ct-price" type="number" min="1"></div>
-    <div class="form-group"><label class="form-label">Assignment Fee ($)</label><input class="form-input" id="ct-fee" type="number" value="15000"></div>
-    <div class="form-group"><label class="form-label">Buyer Price (what buyer pays) ($)</label><input class="form-input" id="ct-buyer" type="number"></div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Contract Price (your offer) ($) *</label><input class="form-input" id="ct-price" type="number" min="1"></div>
+      <div class="form-group"><label class="form-label">Assignment Fee ($)</label><input class="form-input" id="ct-fee" type="number" min="0" value="15000"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label class="form-label">Buyer Price (what buyer pays) ($)</label><input class="form-input" id="ct-buyer" type="number" min="1" placeholder="price + fee">
+        <div class="form-hint" id="ct-spread"></div></div>
+      <div class="form-group"><label class="form-label">Cash buyer</label><select class="form-select" id="ct-buyer-id">
+        <option value="">Not chosen yet</option>
+        ${matched.length ? `<optgroup label="Matches this buy-box">${matched.map(opt).join("")}</optgroup>` : ""}
+        ${all.filter(b => !matchedIds.has(b.id)).length ? `<optgroup label="All buyers">${all.filter(b => !matchedIds.has(b.id)).map(opt).join("")}</optgroup>` : ""}
+      </select></div>
+    </div>
     <div class="form-group"><label class="form-label"><input type="checkbox" id="ct-disclosure" checked> TX Assignment Disclosure Sent</label></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ct-notes"></textarea></div>
     <div class="text-sm text-muted">Disclosure: we are selling the contract, not the house. Required in TX without a license.</div>`;
   const footer = `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
     <button class="btn btn-primary" onclick="submitContract()">Create Contract</button>`;
-  openModal("Lock It & Hand Off", html, footer);
+  openModal("Lock It & Hand Off", html, footer, { wide: true });
+  const upd = () => {
+    const p = parseFloat(document.getElementById("ct-price").value) || 0, f = parseFloat(document.getElementById("ct-fee").value) || 0;
+    const bEl = document.getElementById("ct-buyer");
+    bEl.placeholder = p ? String(p + f) : "price + fee";
+    const b = parseFloat(bEl.value) || (p ? p + f : 0);
+    document.getElementById("ct-spread").innerHTML = p && b ? (b < p ? '<span class="text-danger">Below your contract price — you would lose money.</span>'
+      : `Your spread: <strong>${fmtMoney(b - p)}</strong>`) : "";
+  };
+  ["ct-price", "ct-fee", "ct-buyer"].forEach(id => document.getElementById(id).addEventListener("input", upd));
 }
 
 async function submitContract() {
@@ -706,6 +734,7 @@ async function submitContract() {
     contract_price: price,
     assignment_fee: Number.isFinite(fee) && fee >= 0 ? fee : 15000,
     buyer_price: Number.isFinite(buyer) && buyer > 0 ? buyer : null,
+    buyer_id: document.getElementById("ct-buyer-id").value || null,
     disclosure_sent: document.getElementById("ct-disclosure").checked,
     notes: document.getElementById("ct-notes").value || null,
   };
@@ -714,7 +743,7 @@ async function submitContract() {
     closeModal();
     toast("Contract created — push to buyers now", "success");
     loadLead();
-  } catch (e) { toast("Error: " + e.message, "error"); }
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
 }
 
 async function loadBuyers() {

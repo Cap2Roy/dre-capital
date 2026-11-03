@@ -19,9 +19,25 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "3.1.0"
+CURRENT_VERSION = "3.1.1"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.1.1",
+        "date": "2026-11-03",
+        "title": "Contracts: documents, buyer, and safer numbers",
+        "sections": {
+            "Added": [
+                "Contracts page: '📄 Seller' and '📄 Buyer' open the purchase agreement and the assignment agreement — copy, print / save as PDF, or email them.",
+                "Create Contract: pick the cash buyer (buy-box matches first), and see your spread as you type; the buyer price fills in as your price + fee.",
+            ],
+            "Fixed": [
+                "The assignment agreement showed the buyer price as a raw number (\"$15000.0\") and the wrong amount when no buyer price was entered; it now shows price + fee, formatted.",
+                "Contracts can't be created with a $0 price, a negative fee, or a buyer price below your contract price, and a property can have only one active contract at a time.",
+                "Only real statuses (signed, assigned, closed, fallen) can be set; a fallen-through deal puts the property back to Working.",
+            ],
+        },
+    },
     {
         "version": "3.1.0",
         "date": "2026-11-03",

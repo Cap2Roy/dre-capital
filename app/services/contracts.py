@@ -69,7 +69,8 @@ def contract_context(db: Session, contract: Contract, party: str) -> dict:
         "year_built": lead.year_built if lead.year_built is not None else "N/A",
         "contract_price": contract.contract_price,
         "assignment_fee": contract.assignment_fee,
-        "buyer_price": contract.buyer_price,
+        # What the cash buyer pays: entered, else our price + the assignment fee.
+        "buyer_price": contract.buyer_price or (contract.contract_price or 0) + (contract.assignment_fee or 0),
         "contract": contract,
         "party": party,
         "today": _today(),
