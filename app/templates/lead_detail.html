@@ -63,7 +63,8 @@ function renderLead(l, tl, brief) {
     <div>
       <div class="flex items-center gap-3">
         ${stackBadge(l.stack_depth)}
-        ${statusBadge(l.status)}
+        <span class="text-sm text-muted">Stage</span> ${stageSelect(l, loadLead)}
+        <span class="text-sm text-muted">Tag</span> ${tagSelect(l)}
         ${l.absentee ? '<span class="badge badge-neutral">Absentee</span>' : ""}
         ${l.owner_is_llc ? '<span class="badge badge-warning">LLC</span>' : ""}
       </div>

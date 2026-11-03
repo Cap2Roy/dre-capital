@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+{% block content %}
+<style>
+  .pl-board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
+  .pl-col { flex: 0 0 270px; background: var(--surface, #f6f7f9); border-radius: 12px; border-top: 3px solid var(--pl-c, #94a3b8);
+            display: flex; flex-direction: column; max-height: calc(100vh - 210px); }
+  .pl-head { padding: 10px 12px 6px; }
+  .pl-title { display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: var(--pl-c); }
+  .pl-count { font-size: 12px; background: #fff; border: 1px solid var(--border, #e5e7eb); border-radius: 10px; padding: 0 8px; color: var(--text-2, #555); }
+  .pl-sub { font-size: 12px; color: var(--text-3, #888); margin-top: 2px; }
+  .pl-cards { padding: 6px 10px 12px; overflow-y: auto; flex: 1; min-height: 80px; }
+  .pl-cards.drop { background: rgba(59, 130, 246, .08); outline: 2px dashed #93c5fd; border-radius: 8px; }
+  .pl-empty { border: 2px dashed var(--border, #e5e7eb); border-radius: 8px; padding: 18px; text-align: center; color: var(--text-3, #999); font-size: 13px; }
+  .pl-card { background: #fff; border: 1px solid var(--border, #e5e7eb); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+             cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .pl-card:hover { border-color: #c7d2fe; }
+  .pl-card.dragging { opacity: .45; }
+  .pl-addr { font-weight: 700; font-size: 14px; line-height: 1.25; }
+  .pl-city { font-size: 12px; color: var(--text-2, #555); margin-top: 2px; }
+  .pl-owner { font-size: 12px; color: var(--text-2, #555); margin-top: 2px; }
+  .pl-val { color: #16a34a; font-weight: 700; margin-top: 4px; }
+  .pl-val small { color: var(--text-3, #888); font-weight: 400; }
+  .pl-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .pl-tag { border: 1px solid; border-radius: 12px; padding: 1px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; cursor: pointer; background: #fff; }
+  .pl-tag select { border: 0; background: transparent; font: inherit; color: inherit; text-transform: uppercase; cursor: pointer; }
+</style>
+
+<div class="page-header">
+  <div>
+    <div class="page-title">Pipeline</div>
+    <div class="page-subtitle">Drag a property to move it to the next stage. Click a card to open it.</div>
+  </div>
+  <div class="flex gap-2" style="flex-wrap:wrap">
+    <input id="pl-q" class="form-input" placeholder="Search address, owner, city…" style="width:220px">
+    <input id="pl-state" class="form-input" placeholder="State" maxlength="2" style="width:80px">
+    <select id="pl-tag" class="form-select" style="width:auto"><option value="">All tags</option></select>
+    <label class="text-sm" style="align-self:center"><input type="checkbox" id="pl-dead"> Show Dead</label>
+  </div>
+</div>
+<div id="pl-total" class="text-sm text-muted mb-2"></div>
+<div class="pl-board" id="pl-board"><div class="empty-state">Loading…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STAGE_COLORS = { new: "#64748b", working: "#2563eb", warm: "#d97706", under_contract: "#ea580c", assigned: "#7c3aed", closed: "#059669", dead: "#9ca3af" };
+const TAGS = { needs_focus: ["Needs focus", "#c2410c"], hot: ["Hot", "#dc2626"], follow_up: ["Follow up", "#2563eb"], waiting: ["Waiting", "#6b7280"], on_hold: ["On hold", "#6b7280"] };
+document.getElementById("pl-tag").innerHTML += Object.entries(TAGS).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join("");
+let _board = null, _dragId = null;
+
+function money(v) { return v == null ? "" : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${Math.round(v / 1000)}k`; }
+
+function tagHtml(c) {
+  const [label, color] = TAGS[c.tag] || ["+ tag", "#9ca3af"];
+  return `<span class="pl-tag" style="color:${color};border-color:${color}" onclick="event.stopPropagation()">
+    <select onchange="setTag('${c.id}', this.value)" onmousedown="event.stopPropagation()">
+      <option value="" ${!c.tag ? "selected" : ""}>${c.tag ? "No tag" : "+ tag"}</option>
+      ${Object.entries(TAGS).map(([k, [l]]) => `<option value="${k}" ${c.tag === k ? "selected" : ""}>${l}</option>`).join("")}
+    </select></span>`;
+}
+
+function cardHtml(c) {
+  const where = [c.city, c.state].filter(Boolean).join(", ");
+  const badges = [
+    c.owner_phones ? `<span class="badge badge-success">☎ ${c.owner_phones} owner</span>` : (c.contacts ? `<span class="badge badge-neutral">☎ ${c.contacts} contact</span>` : `<span class="badge badge-warning">no phone</span>`),
+    c.listed_on.length ? `<span class="badge badge-info" title="${escHtml(c.listed_on.join(", "))}">Listed: ${escHtml(c.listed_on.slice(0, 2).join(", "))}${c.listed_on.length > 2 ? " +" + (c.listed_on.length - 2) : ""}</span>` : "",
+    c.origin ? `<span class="badge badge-neutral" title="Where we found it">${escHtml(c.origin)}</span>` : "",
+  ].filter(Boolean).join("");
+  return `<div class="pl-card" draggable="true" data-id="${c.id}" onclick="location.href='/properties/${c.id}'">
+    <div class="pl-addr">${escHtml(c.address)}</div>
+    ${where ? `<div class="pl-city">📍 ${escHtml(where)}${c.zip ? " " + escHtml(c.zip) : ""}</div>` : ""}
+    <div class="pl-owner">${c.owner ? escHtml(c.owner) : '<span class="text-muted">Owner not on file</span>'}</div>
+    ${c.value ? `<div class="pl-val">${money(c.value)} <small>${escHtml(c.value_label)}</small></div>` : ""}
+    <div class="pl-meta">${tagHtml(c)}${badges}</div>
+  </div>`;
+}
+
+async function loadBoard() {
+  const p = new URLSearchParams();
+  const q = document.getElementById("pl-q").value.trim(), st = document.getElementById("pl-state").value.trim(), tag = document.getElementById("pl-tag").value;
+  if (q) p.set("q", q); if (st.length === 2) p.set("state", st); if (tag) p.set("tag", tag);
+  if (document.getElementById("pl-dead").checked) p.set("include_dead", "true");
+  try { _board = await API.get("/api/pipeline?" + p); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); return; }
+  document.getElementById("pl-total").textContent = `${_board.total} properties`;
+  document.getElementById("pl-board").innerHTML = _board.stages.map(s => `
+    <div class="pl-col" style="--pl-c:${STAGE_COLORS[s.id]}">
+      <div class="pl-head" title="${escHtml(s.hint)}">
+        <div class="pl-title"><span>${escHtml(s.label)}</span><span class="pl-count">${s.count}</span></div>
+        <div class="pl-sub">${s.total_value ? money(s.total_value) + " total value" : escHtml(s.hint)}</div>
+      </div>
+      <div class="pl-cards" data-stage="${s.id}">${s.cards.length ? s.cards.map(cardHtml).join("") : '<div class="pl-empty">Drop a property here</div>'}</div>
+    </div>`).join("");
+  wireDrag();
+}
+
+function wireDrag() {
+  document.querySelectorAll(".pl-card").forEach(el => {
+    el.addEventListener("dragstart", e => { _dragId = el.dataset.id; el.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+    el.addEventListener("dragend", () => el.classList.remove("dragging"));
+  });
+  document.querySelectorAll(".pl-cards").forEach(zone => {
+    zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drop"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drop"));
+    zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("drop"); if (_dragId) moveTo(_dragId, zone.dataset.stage); });
+  });
+}
+
+function findCard(id) { for (const s of _board.stages) { const c = s.cards.find(x => x.id === id); if (c) return c; } return null; }
+
+async function moveTo(id, stage) {
+  const c = findCard(id);
+  if (!c || c.status === stage) return;
+  if (["under_contract", "assigned", "closed"].includes(stage) && !confirm(
+      `Move ${c.address} to ${_board.stages.find(s => s.id === stage).label}? Create or update its contract on the property page too.`)) return;
+  try {
+    await API.patch(`/api/leads/${id}`, { status: stage });
+    toast(`${c.address} → ${_board.stages.find(s => s.id === stage).label}`, "success");
+  } catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  loadBoard();
+}
+
+async function setTag(id, tag) {
+  try { await API.patch(`/api/leads/${id}`, { tag }); loadBoard(); }
+  catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+}
+
+let _t;
+["pl-q", "pl-state"].forEach(id => document.getElementById(id).addEventListener("input", () => { clearTimeout(_t); _t = setTimeout(loadBoard, 300); }));
+["pl-tag", "pl-dead"].forEach(id => document.getElementById(id).addEventListener("change", loadBoard));
+loadBoard();
+</script>
+{% endblock %}

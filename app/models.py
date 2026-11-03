@@ -194,6 +194,8 @@ class Lead(TimestampMixin, Base):
     ai_call_consent_source: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ai_call_consent_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     # Archive: hidden from Properties, the call queue, and the dashboard; restorable.
+    # Pipeline tag shown on the property's card: needs_focus | hot | follow_up | waiting | on_hold (None = no tag)
+    tag: Mapped[Optional[str]] = mapped_column(String(24), nullable=True, index=True)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     archived_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     archive_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

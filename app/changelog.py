@@ -19,9 +19,25 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "3.1.1"
+CURRENT_VERSION = "3.2.0"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.2.0",
+        "date": "2026-11-03",
+        "title": "Pipeline board, stages and tags, property data that fills in",
+        "sections": {
+            "Added": [
+                "Pipeline (menu → Pipeline): every property as a card in its stage — New, Outreach, Warm, Dispo (under contract, finding a buyer), Title (buyer assigned, closing), Done — with count and total value per column. Drag a card to move it; filter by search, state, or tag; show Dead on demand.",
+                "Each card shows the address, city, owner, value, a tag (Needs focus, Hot, Follow up, Waiting, On hold), whether we have an owner number, where it's listed, and where we found it.",
+                "Stage and tag dropdowns on every property in the Properties list and on the property page.",
+                "'Fill data, phones & listings for all' on Properties fills missing property data, phones and listings in one run; new properties get all three every morning.",
+            ],
+            "Fixed": [
+                "Refresh property data works without RentCast: it fills empty fields from the U.S. Census geocoder (ZIP), county appraisal parcel records (Tarrant, Dallas and Arizona counties), the government sale page, and official assessor pages found by research — owner, mailing address and value only from official sources; beds, baths, sqft and year built also from listing pages we re-read. Every filled value shows its source. RentCast is still used when its subscription is active.",
+            ],
+        },
+    },
     {
         "version": "3.1.1",
         "date": "2026-11-03",

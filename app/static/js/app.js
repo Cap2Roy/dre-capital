@@ -267,11 +267,20 @@ function renderNumberCheck(v, opts = {}) {
   return `<div class="nc"><div class="nc-head"><span class="col-mono">${escHtml(fmtPhone(v.number))}</span> ${verdict}</div><ul class="nc-list">${rows}</ul></div>`;
 }
 
+/** Fill this property's empty fields from public records (+ RentCast when active). The server records
+ *  each filled value's source as a scan (Property research shows it with links); the toast lists them. */
 async function refreshPropertyData(leadId, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "Pulling data…"; }
+  if (btn) { btn.disabled = true; btn.textContent = "Pulling public records… (up to a minute)"; }
   try {
-    await API.post(`/api/leads/${leadId}/property-data`);
-    toast("Property data updated", "success");
+    const res = await API.post(`/api/leads/${leadId}/property-data`);
+    const r = res.refresh || {};
+    const filled = r.filled || [];
+    const missing = (r.missing || []).map(f => f.replace(/_/g, " "));
+    const msg = filled.length
+      ? "Filled: " + filled.map(a => `${a.field.replace(/_/g, " ")} ${a.value} (${a.source})`).join("; ")
+      : "Nothing new found in public records";
+    toast(msg + (missing.length ? `. Still missing: ${missing.join(", ")}` : ""), filled.length ? "success" : "");
+    if (r.scan && typeof onPropertyScanned === "function") onPropertyScanned(r.scan);
     if (typeof onBriefRefreshed === "function") onBriefRefreshed(leadId);
   } catch (e) {
     toast("Couldn't refresh: " + e.message.replace(/^\d+\s*/, ""), "error");
@@ -423,4 +432,29 @@ async function runPropertyScan(leadId, btn) {
 function safeUrl(u) {
   try { const x = new URL(String(u || "")); return x.protocol === "https:" || x.protocol === "http:" ? x.href : ""; }
   catch (_) { return ""; }
+}
+
+// ── Pipeline stage + tag (shared by Pipeline, Properties list, property page) ──
+const STAGE_LABELS = { new: "New", working: "Outreach", warm: "Warm", under_contract: "Dispo — under contract",
+                       assigned: "Title — buyer assigned", closed: "Done", dead: "Dead" };
+const TAG_LABELS = { needs_focus: "Needs focus", hot: "Hot", follow_up: "Follow up", waiting: "Waiting", on_hold: "On hold" };
+
+function stageSelect(l, onDone) {
+  const id = "st-" + l.id;
+  setTimeout(() => { const el = document.getElementById(id); if (el) el.onchange = async () => {
+    try { await API.patch(`/api/leads/${l.id}`, { status: el.value }); toast(`Moved to ${STAGE_LABELS[el.value]}`, "success"); if (onDone) onDone(); }
+    catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  }; }, 0);
+  return `<select id="${id}" class="form-select" style="width:auto;padding:2px 8px;font-size:12px" onclick="event.stopPropagation()">
+    ${Object.entries(STAGE_LABELS).map(([k, v]) => `<option value="${k}" ${l.status === k ? "selected" : ""}>${v}</option>`).join("")}</select>`;
+}
+
+function tagSelect(l, onDone) {
+  const id = "tg-" + l.id;
+  setTimeout(() => { const el = document.getElementById(id); if (el) el.onchange = async () => {
+    try { await API.patch(`/api/leads/${l.id}`, { tag: el.value }); if (onDone) onDone(); }
+    catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); }
+  }; }, 0);
+  return `<select id="${id}" class="form-select" style="width:auto;padding:2px 8px;font-size:12px" onclick="event.stopPropagation()">
+    <option value="">No tag</option>${Object.entries(TAG_LABELS).map(([k, v]) => `<option value="${k}" ${l.tag === k ? "selected" : ""}>${v}</option>`).join("")}</select>`;
 }

@@ -17,7 +17,7 @@ from app.database import init_db
 from app.changelog import CURRENT_VERSION as __version__
 from app.routers import (
     agents, ai_calls, auth, buyers, call_flows, calls, contact_research, contracts, dashboard, importer, leads, live_agent,
-    meetings, messages,
+    meetings, messages, pipeline,
     property_scan, scraper, settings, users, valuation,
 )
 from app.services.scheduler import scheduler_loop
@@ -143,7 +143,7 @@ templates.env.filters["wn_method_class"] = lambda m: {
 }.get(m, "badge-neutral")
 
 # API routers
-for r in (auth, users, settings, dashboard, leads, property_scan, contact_research, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
+for r in (auth, users, settings, dashboard, pipeline, leads, property_scan, contact_research, importer, valuation, calls, call_flows, ai_calls, live_agent, agents, buyers, contracts, scraper, messages, meetings):
     app.include_router(r.router)
 
 
@@ -208,6 +208,11 @@ def _ctx(request: Request) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def page_dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {**_ctx(request), "page": "dashboard"})
+
+
+@app.get("/pipeline", response_class=HTMLResponse)
+def page_pipeline(request: Request):
+    return templates.TemplateResponse("pipeline.html", {**_ctx(request), "page": "pipeline"})
 
 
 @app.get("/properties", response_class=HTMLResponse)

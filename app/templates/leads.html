@@ -7,7 +7,7 @@
     <div class="page-subtitle">Every property and its owner. Sorted by stack depth — call deepest first.</div>
   </div>
   <div class="flex gap-2">
-    <button class="btn btn-outline" id="bulk-research" onclick="bulkResearch()">📞 Find phones & listings for all</button>
+    <button class="btn btn-outline" id="bulk-research" onclick="bulkResearch()">🔄 Fill data, phones & listings for all</button>
     <button class="btn btn-primary" onclick="addLeadModal()">+ Add Property</button>
   </div>
 </div>
@@ -113,7 +113,7 @@ async function loadLeads() {
         <td>${phonesCell(l)}</td>
         <td>${listedCell(l)}</td>
         <td class="col-num">${fmtMoneyK(l.assessed_value)}</td>
-        <td>${statusBadge(l.status)}</td>
+        <td onclick="event.stopPropagation()">${stageSelect(l, loadLeads)}<div style="margin-top:3px">${tagSelect(l)}</div></td>
         <td class="text-sm ${l.next_followup && daysFromNow(l.next_followup) <= 1 ? "text-danger font-semi" : "text-muted"}">${fmtDate(l.next_followup)}</td>
         <td class="col-mono">${(l.calls || []).length}</td>
         <td style="white-space:nowrap" onclick="event.stopPropagation()">
@@ -152,7 +152,7 @@ async function loadResearchStatus() {
   try {
     const s = await API.get("/api/research/status");
     document.getElementById("research-status").textContent =
-      `${s.with_owner_phone} of ${s.total} properties have an owner number · ${s.with_any_phone} have any contact · ${s.listed_on_marketplace} listed on a marketplace · ${s.remaining} not researched yet`;
+      `${s.with_owner_phone} of ${s.total} properties have an owner number · ${s.with_any_phone} have any contact · ${s.listed_on_marketplace} listed on a marketplace · ${s.remaining + (s.data ? s.data.remaining : 0)} still to research`;
     return s;
   } catch (e) { return null; }
 }
@@ -162,24 +162,25 @@ async function bulkResearch() {
   const btn = document.getElementById("bulk-research");
   if (_bulkRunning) { _bulkRunning = false; btn.textContent = "Stopping after this batch…"; return; }
   const s = await loadResearchStatus();
-  if (s && s.remaining === 0) { toast("Every property has been researched. Open a property and use Find phones & listings to search it again.", ""); return; }
-  if (!confirm(`Search phones and marketplace listings for ${s ? s.remaining : "the"} properties? Each takes about a minute (4 at a time) and uses about $0.20–0.40 of xAI credit.`)) return;
+  const todo = s ? Math.max(s.remaining, s.data ? s.data.remaining : 0) : null;
+  if (s && todo === 0) { toast("Every property has been researched. Open a property to refresh it again.", ""); return; }
+  if (!confirm(`Fill property data (owner, beds, sqft, value…), phones and marketplace listings for up to ${todo ?? "all"} properties? About a minute each (4 at a time), roughly $0.10–0.40 of xAI credit per property.`)) return;
   _bulkRunning = true;
   let done = 0, cost = 0, phones = 0;
   const seen = new Set();
   while (_bulkRunning) {
     btn.textContent = `⏸ Stop (${done} done, ${phones} numbers, $${cost.toFixed(2)})`;
     let r;
-    try { r = await API.post("/api/research/batch", { limit: 8 }); }
+    try { r = await API.post("/api/research/batch", { limit: 8, parts: ["data", "phones", "listings"] }); }
     catch (e) { toast(e.message.replace(/^\d+\s*/, ""), "error"); break; }
     const fresh = r.processed.filter(x => !seen.has(x.lead_id));
     fresh.forEach(x => seen.add(x.lead_id));
     done += fresh.length; cost += r.cost_usd; phones += fresh.reduce((a, x) => a + x.phones_added, 0);
     await loadResearchStatus(); loadLeads();
-    if (!fresh.length || r.remaining === 0) break;
+    if (!fresh.length || (r.remaining === 0 && (!r.data || r.data.remaining === 0))) break;
   }
   _bulkRunning = false;
-  btn.textContent = "📞 Find phones & listings for all";
+  btn.textContent = "🔄 Fill data, phones & listings for all";
   toast(`Researched ${done} properties · ${phones} new numbers · $${cost.toFixed(2)}`, "success");
 }
 

@@ -23,10 +23,12 @@ Sources (``CATALOG``; enabled per source in Settings → Property data sources):
   adapters written from each provider's public API docs (endpoint, auth header,
   response fields). Estated is listed but not integrated (sunset, now ATTOM).
 
-Facts from authoritative sources (official assessor / appraisal-district pages
-confirmed on the page, RentCast public records) fill EMPTY lead fields only
-(year built, sqft, beds, baths, assessed value) — user-entered data is never
-overwritten, and conflicting authoritative values fill nothing.
+Facts fill EMPTY lead fields only (``LEAD_FILL`` / ``fill_tier``) — user-entered data is never
+overwritten, and a field whose best-tier values disagree stays empty. Owner, mailing address and assessed
+value come only from official sources (county parcel layers, the government sale page, official assessor /
+appraisal / tax pages we re-read and confirmed); year built, living area, beds and baths may also come from
+RentCast or a listing / record page we re-read with the number bound to its label next to this address.
+``property_data.refresh`` ("Refresh property data") uses the same rules with free sources first.
 """
 from __future__ import annotations
 
@@ -90,19 +92,28 @@ FIELD_LABELS = {
     "bankruptcy": "Bankruptcy", "vacancy": "Vacancy",
     "listing_status": "Listing status", "list_price": "List price", "listing_date": "Listed on",
     "days_on_market": "Days on market", "estimated_value": "Estimated value (AVM)", "listing_agent": "Listing agent",
+    "property_zip": "ZIP code", "matched_address": "Matched address", "county": "County",
 }
 # Fields that legitimately hold several values (one per record) — never a "conflict".
 MULTI_FIELDS = {"sale_record", "mortgage", "foreclosure_notice", "sheriff_sale", "tax_sale", "tax_lien", "lis_pendens",
                 "code_violation", "probate", "bankruptcy", "exemptions", "listing_agent", "estimated_value"}
 
-# Lead columns filled (only when empty) from authoritative facts.
+# Lead columns filled (only when empty) from authoritative facts: fact field → (lead column, kind, policy).
+# Policy "record": official facts, RentCast, or a listing / record page we re-read that shows the value
+# next to its label for this address. Policy "official": official assessor / appraisal / tax sources and the
+# government sale page only. "mailing" fills mailing_address/_city/_state/_zip from one "street, city, ST ZIP".
 LEAD_FILL = {
-    "year_built": ("year_built", int),
-    "living_sqft": ("sqft", int),
-    "beds": ("beds", int),
-    "baths": ("baths", float),
-    "assessed_value": ("assessed_value", float),
+    "year_built": ("year_built", "int", "record"),
+    "living_sqft": ("sqft", "int", "record"),
+    "beds": ("beds", "int", "record"),
+    "baths": ("baths", "float", "record"),
+    "property_zip": ("property_zip", "zip", "record"),
+    "assessed_value": ("assessed_value", "float", "official"),
+    "owner_name": ("owner_name", "text", "official"),
+    "owner_mailing_address": ("mailing_address", "mailing", "official"),
 }
+# Structured official sources: county parcel layers, the government sale page, the U.S. Census geocoder.
+STRUCTURED_OFFICIAL = {"county_parcels", "sale_page", "census"}
 
 # Official, non-.gov appraisal / assessor domains (most are *.gov or *.us).
 _OFFICIAL_HOSTS = {"tad.org", "dallascad.org", "hcad.org", "traviscad.org", "bcad.org", "collincad.org",
@@ -730,8 +741,8 @@ _cv_cache: dict[str, Any] = {}
 CV_CACHE_SECONDS = 12 * 3600
 
 
-def census_county(t: Target) -> Optional[tuple[str, str]]:
-    """(county name, state) from the U.S. Census geocoder, e.g. ("Camden County", "NJ"); None when unmatched."""
+def census_match(t: Target) -> Optional[dict]:
+    """The U.S. Census geocoder's match for this address (matched address, ZIP, county, coordinates); None when unmatched."""
     try:
         r = httpx.get(CENSUS_GEOCODER, timeout=API_TIMEOUT, headers={"User-Agent": USER_AGENT},
                       params={"address": t.address, "benchmark": "Public_AR_Current", "vintage": "Current_Current",
@@ -740,9 +751,23 @@ def census_county(t: Target) -> Optional[tuple[str, str]]:
         match = (_pick(r.json(), "result.addressMatches") or [None])[0]
     except (httpx.HTTPError, ValueError) as exc:
         raise ScanError(f"U.S. Census geocoder unavailable: {type(exc).__name__}") from exc
-    county = _pick(match, "geographies.Counties.0.NAME") if match else None
-    state = _pick(match, "addressComponents.state") if match else None
-    return (county, state.upper()) if county and state else None
+    if not match:
+        return None
+    state = _pick(match, "addressComponents.state")
+    return {
+        "matched_address": match.get("matchedAddress"),
+        "zip": _pick(match, "addressComponents.zip"),
+        "state": state.upper() if state else None,
+        "county": _pick(match, "geographies.Counties.0.NAME"),
+        "latitude": _pick(match, "coordinates.y"),
+        "longitude": _pick(match, "coordinates.x"),
+    }
+
+
+def census_county(t: Target) -> Optional[tuple[str, str]]:
+    """(county name, state) from the U.S. Census geocoder, e.g. ("Camden County", "NJ"); None when unmatched."""
+    m = census_match(t)
+    return (m["county"], m["state"]) if m and m["county"] and m["state"] else None
 
 
 def _cell(s: str) -> str:
@@ -994,13 +1019,37 @@ GROK_FOCUS = {
                "these signals only (say plainly if none were found).",
 }
 
+# "Refresh property data": one pass on the official record for the fields a lead still lacks. Owner,
+# mailing address and value fill a lead only from official pages; beds / baths / living area / year
+# built may also come from a listing page we re-read (value next to its label for this address).
+_DATA_FIELDS = {
+    "owner_name": "owner_name (owner of record)", "owner_mailing_address": "owner_mailing_address",
+    "assessed_value": "assessed_value (and market_value)", "year_built": "year_built", "living_sqft": "living_sqft",
+    "beds": "beds", "baths": "baths",
+}
 
-def _grok_call(key: str, model: str, t: Target, focus: str) -> tuple[dict, dict]:
+
+def grok_data_focus(need: list[str]) -> str:
+    """Instructions for the data pass, naming the fact fields we still need (keys of ``_DATA_FIELDS``)."""
+    wanted = ", ".join(_DATA_FIELDS[f] for f in need if f in _DATA_FIELDS) or ", ".join(_DATA_FIELDS.values())
+    physical = [f for f in need if f in ("year_built", "living_sqft", "beds", "baths")]
+    return ("Focus of this pass: the official record of this property — the county appraisal district / assessor / "
+            "property appraiser page and the tax collector page. Open the record itself (search the county site by "
+            f"address, then by the parcel / account number an aggregator shows). Fields we need: {wanted}. Report "
+            "owner_mailing_address as one line 'street, city, ST ZIP' exactly as the record prints it. Report "
+            "assessed_value only from the official record, with its tax year in as_of."
+            + (f" If the official record does not state {', '.join(physical)}, report them from a public listing page "
+               "for this exact address (Zillow, Redfin, Realtor.com, Homes.com, HAR, Trulia, Movoto or similar) with a "
+               "quote that shows the number next to its label." if physical else "")
+            + " Report categories ownership, property and value_tax only. Summary: one sentence on what the record shows.")
+
+
+def _grok_call(key: str, model: str, t: Target, focus: str, focus_text: str) -> tuple[dict, dict]:
     """One Responses API call with web_search → (parsed JSON output, raw response)."""
     user = f"Property: {t.address}" + (f"\nOwner on our list: {t.owner}" if t.owner else "")
     body = {
         "model": model,
-        "instructions": GROK_INSTRUCTIONS + "\n\n" + GROK_FOCUS[focus],
+        "instructions": GROK_INSTRUCTIONS + "\n\n" + focus_text,
         "input": [{"role": "user", "content": user}],
         "tools": [{"type": "web_search"}],
         "max_tool_calls": GROK_MAX_TOOL_CALLS,
@@ -1026,12 +1075,13 @@ def _grok_call(key: str, model: str, t: Target, focus: str) -> tuple[dict, dict]
         raise ScanError(f"Grok {focus} research returned no structured result.") from exc
 
 
-def grok_research(key: str, model: str, t: Target) -> dict:
-    """Records + signals research in parallel; facts validated against the URLs the search engine
-    returned (pages Grok only opened / cited must be confirmed by our re-read), then re-checked on the
-    cited pages. Raises ScanError if both passes fail."""
-    with ThreadPoolExecutor(max_workers=len(GROK_FOCUS)) as ex:
-        futures = {focus: ex.submit(_grok_call, key, model, t, focus) for focus in GROK_FOCUS}
+def grok_research(key: str, model: str, t: Target, passes: Optional[dict[str, str]] = None) -> dict:
+    """Research passes in parallel (default: records + signals, ``GROK_FOCUS``); facts validated against the
+    URLs the search engine returned (pages Grok only opened / cited must be confirmed by our re-read), then
+    re-checked on the cited pages. Raises ScanError if every pass fails."""
+    passes = passes or GROK_FOCUS
+    with ThreadPoolExecutor(max_workers=len(passes)) as ex:
+        futures = {focus: ex.submit(_grok_call, key, model, t, focus, text) for focus, text in passes.items()}
     facts: list[dict] = []
     needs_confirm: list[dict] = []   # cited page was opened / cited by the model but never a search result
     seen: set[tuple[str, str, str]] = set()
@@ -1079,7 +1129,7 @@ def grok_research(key: str, model: str, t: Target) -> dict:
                 facts.append(fact)
                 if not _was_touched(url, results):
                     needs_confirm.append(fact)
-    if len(errors) == len(GROK_FOCUS):
+    if len(errors) == len(passes):
         raise ScanError("; ".join(errors))
     verify_on_pages(facts, t)
     unproven = [f for f in needs_confirm if f["check"] != "confirmed"]
@@ -1193,6 +1243,73 @@ def _read_pages(urls: list[str]) -> dict[str, tuple[Optional[str], Optional[str]
     return out
 
 
+# Beds / baths / living area / year built may fill a lead from a listing page too, so their page check is
+# stricter than value_on_page: the number must be bound to its label ("3 beds", "year built 1974", "baths
+# 1.5"), and around a mention of this address — up to the next other address on the same street (cards of
+# neighbouring homes) or _SEGMENT chars — every labelled value must agree with ours. Page text is
+# normalized by _norm (lowercase, no colons / thousands commas).
+_LABELED_TOKEN_RE = re.compile(
+    r"(?P<living_sqft>sq\.?\s*f(?:ee)?t\.?|square\s+f(?:ee|oo)t(?:age)?|sf(?![a-z])|living\s+(?:area|space)"
+    r"|heated\s+area|building\s+area|gross\s+living\s+area)"
+    r"|(?P<year_built>year\s+built|yr\.?\s+built|year\s+constructed|built\s+in(?![a-z])|built(?![a-z]))"
+    r"|(?P<beds>bed(?:room)?s?(?![a-z])|bds?(?![a-z])|br(?![a-z]))"
+    r"|(?P<baths>(?:full\s+)?bath(?:room)?s?(?![a-z])|ba(?![a-z]))"
+    r"|(?P<num>(?<![\d.])\d+(?:\.\d+)?(?!\d))"
+    r"|(?P<word>\S+)")
+LABELED_FIELDS = ("living_sqft", "year_built", "beds", "baths")
+_LABELED_RANGE = {"living_sqft": (100, 100000), "year_built": (1700, 2100), "beds": (0, 30), "baths": (0, 30)}
+_LOT_WORDS = {"lot", "site", "land", "acreage", "acre", "acres", "parcel"}
+_SEGMENT = 2500  # chars on each side of an address mention
+
+
+def labeled_values(page: str, fld: str) -> list[tuple[int, float]]:
+    """(position, value) of every number bound to a ``fld`` label: in a run of labels and numbers, pairs are
+    read left to right as "number label" or "label number" ("3 beds 2 baths", "beds 3 baths 1.5")."""
+    tokens = [(m.lastgroup, m.group(), m.start()) for m in _LABELED_TOKEN_RE.finditer(page)]
+    out: list[tuple[int, float]] = []
+    i = 0
+    while i < len(tokens) - 1:
+        (k1, v1, p1), (k2, v2, p2) = tokens[i], tokens[i + 1]
+        pair = None
+        if k1 == "num" and k2 in LABELED_FIELDS and k2 != "year_built":  # "sold 2012 year built 1995": 2012 isn't it
+            pair = (k2, float(v1), p1)
+        elif k1 in LABELED_FIELDS and k2 == "num":
+            pair = (k1, float(v2), p2)
+        if pair is None or not _LABELED_RANGE[pair[0]][0] <= pair[1] <= _LABELED_RANGE[pair[0]][1]:
+            i += 1   # "rooms 6 living area 1275": 6 isn't a living area, so 1275 stays free for its label
+            continue
+        i += 2
+        if pair[0] != fld:
+            continue
+        if fld == "living_sqft":  # "site area 7750 sq ft", "lot 6250 sqft" are the land, not the house
+            around = {w for k, w, _ in tokens[max(0, i - 5):i - 2] if k == "word"}
+            after = tokens[i][1] if i < len(tokens) else ""
+            if around & _LOT_WORDS or after in _LOT_WORDS:
+                continue
+        out.append((pair[2], pair[1]))
+    return out
+
+
+def labeled_on_page(fact: dict, page: str, addr: list[str]) -> bool:
+    """True when, around some mention of this address (bounded by other house numbers on the same street),
+    the numbers bound to the fact's label all equal its value."""
+    want = _num(fact["value"])
+    vals = labeled_values(page, fact["field"])
+    if want is None or not vals or len(addr) < 2:
+        return False
+    mine: list[int] = []
+    others: list[int] = []
+    for m in re.finditer(rf"(?<![\d.])(\d{{1,6}})\s+(?:[nsew]\.?\s+)?{addr[1]}(?![a-z0-9])", page):
+        (mine if re.fullmatch(addr[0], m.group(1)) else others).append(m.start())
+    for pos in mine:
+        lo = max([o for o in others if o < pos] + [pos - _SEGMENT])
+        hi = min([o for o in others if o > pos] + [pos + _SEGMENT])
+        seen = [v for p, v in vals if lo < p < hi]
+        if seen and all(abs(v - want) < 0.01 for v in seen):
+            return True
+    return False
+
+
 def verify_on_pages(facts: list[dict], t: Optional[Target] = None) -> None:
     """Set each Grok fact's ``check``: confirmed | not_found | unchecked (+ ``check_note``).
     A page that doesn't show the property's house number + street (bot-check page, different
@@ -1224,6 +1341,11 @@ def verify_on_pages(facts: list[dict], t: Optional[Target] = None) -> None:
             f["check"], f["check_note"] = "unchecked", reason
         elif addr and not _near(text, addr, len(addr)):
             f["check"], f["check_note"] = "unchecked", "the page we received doesn't show this address (bot check or a different page)"
+        elif f["field"] in LABELED_FIELDS:
+            if labeled_on_page(f, text, addr):
+                f["check"], f["check_note"] = "confirmed", "value found next to its label, nearest to this address on the page"
+            else:
+                f["check"], f["check_note"] = "not_found", "value not found next to its label near this address on the page"
         elif value_on_page(f, text, addr):
             f["check"], f["check_note"] = "confirmed", "value found on the cited page"
         else:
@@ -1376,23 +1498,113 @@ def findings(facts: list[dict]) -> list[dict]:
     return groups
 
 
-def _authoritative(f: dict) -> bool:
-    return f["source"] == "rentcast" or (f["source"] == "grok" and f.get("official") and f.get("check") == "confirmed")
+def fill_tier(f: dict, policy: str) -> Optional[int]:
+    """How far a fact may be trusted to fill an empty lead field (lower = better); None = it may not.
+    0 structured official source (county parcel layer, government sale page, Census geocoder),
+    1 official page Grok cited that we re-read and confirmed, 2 RentCast (physical facts only),
+    3 listing / record page we re-read with the value bound to its label near this address (physical only)."""
+    src, confirmed = f["source"], f.get("check") == "confirmed"
+    if src in STRUCTURED_OFFICIAL and f.get("official"):
+        return 0
+    if src == "grok" and confirmed and f.get("official"):
+        return 1
+    if policy == "record" and src == "rentcast" and f["field"] in LABELED_FIELDS:
+        return 2
+    if policy == "record" and src == "grok" and confirmed and f["field"] in LABELED_FIELDS:
+        return 3
+    return None
+
+
+_REDACTED_RE = re.compile(r"redact|withheld|confidential|daniel'?s law|not (shown|disclosed|available)", re.I)
+
+
+def _fill_value(fld: str, kind: str, f: dict) -> Any:
+    """The fact's value as the lead column expects it; None when it isn't a usable value."""
+    v = " ".join(str(f.get("value") or "").split())
+    if kind in ("int", "float"):
+        n = _num(v)
+        lo, hi = _LABELED_RANGE.get(fld, (0, float("inf")))
+        if n is None or n <= 0 or not lo <= n <= hi:
+            return None
+        return int(n) if kind == "int" else float(n)
+    if kind == "zip":
+        m = re.fullmatch(r"(\d{5})(?:-\d{4})?", v)
+        return m.group(1) if m else None
+    if not v or _ABSENCE_RE.match(v) or _REDACTED_RE.search(v):
+        return None
+    if kind == "text":
+        return v[:255]
+    if kind == "mailing":
+        parts = f.get("parts")
+        if not parts:
+            from app.services.gov_sources import split_address
+            p = split_address(v)
+            parts = p and {"street": p["property_address"], "city": p["property_city"], "state": p["property_state"],
+                           "zip": p["property_zip"]}
+        return parts if parts and parts.get("street") and parts.get("state") else None
+    return None
+
+
+def _same_fill(a: Any, b: Any, fld: str, kind: str) -> bool:
+    if kind in ("int", "float"):
+        return abs(a - b) < 0.01
+    if kind == "mailing":
+        return _norm(a["street"]) == _norm(b["street"]) and (a.get("zip") or "")[:5] == (b.get("zip") or "")[:5]
+    if kind == "text":
+        return _same(_comparable({"field": fld, "value": a}), _comparable({"field": fld, "value": b}), fld)
+    return a == b
+
+
+def _is_empty(v: Any) -> bool:
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def plan_fill(lead: Lead, facts: list[dict]) -> dict[str, tuple[Any, dict]]:
+    """Fact field → (value, the fact it comes from) for each EMPTY lead field (``LEAD_FILL``) the facts can fill.
+    Only the best trust tier with a usable value counts, and a field whose values disagree in that tier
+    stays empty (e.g. two parcels at one address with different values)."""
+    out: dict[str, tuple[Any, dict]] = {}
+    for fld, (attr, kind, policy) in LEAD_FILL.items():
+        if not _is_empty(getattr(lead, attr)):
+            continue
+        cands = []
+        for f in facts:
+            tier = fill_tier(f, policy) if f["field"] == fld else None
+            val = _fill_value(fld, kind, f) if tier is not None else None
+            if val is not None:
+                cands.append((tier, val, f))
+        if not cands:
+            continue
+        best = min(c[0] for c in cands)
+        top = [c for c in cands if c[0] == best]
+        if all(_same_fill(top[0][1], c[1], fld, kind) for c in top[1:]):
+            out[fld] = (top[0][1], top[0][2])
+    return out
 
 
 def apply_to_lead(lead: Lead, facts: list[dict]) -> list[dict]:
-    """Fill EMPTY lead fields from authoritative facts; skip a field when authoritative values disagree."""
+    """Fill EMPTY lead fields from authoritative facts (``plan_fill``); never overwrites a value.
+    Returns what was filled, each with its source name + link."""
+    from app.services.scraping_agent import is_entity
+    from app.services.stacking import normalize_address
     applied = []
-    for fld, (attr, cast) in LEAD_FILL.items():
-        if getattr(lead, attr) not in (None, ""):
-            continue
-        cands = [f for f in facts if f["field"] == fld and _authoritative(f) and _num(f["value"]) is not None]
-        values = {_num(f["value"]) for f in cands}
-        if len(values) != 1:
-            continue
-        val = cast(values.pop())
-        setattr(lead, attr, val)
-        applied.append({"field": attr, "value": val, "source": cands[0]["source_name"], "source_url": cands[0]["source_url"]})
+    for fld, (val, f) in plan_fill(lead, facts).items():
+        attr, kind, _ = LEAD_FILL[fld]
+        shown = val
+        if kind == "mailing":
+            lead.mailing_address = val["street"][:255]
+            for col, key, size in (("mailing_city", "city", 120), ("mailing_state", "state", 2), ("mailing_zip", "zip", 12)):
+                if _is_empty(getattr(lead, col)) and val.get(key):
+                    setattr(lead, col, str(val[key]).strip()[:size])
+            lead.absentee = bool(lead.property_address and
+                                 normalize_address(lead.mailing_address) != normalize_address(lead.property_address))
+            shown = ", ".join(x for x in (val["street"], val.get("city"), " ".join(y for y in (val.get("state"), val.get("zip")) if y)) if x)
+        else:
+            setattr(lead, attr, val)
+            if fld == "owner_name" and is_entity(val):
+                lead.owner_is_llc = True
+        applied.append({"field": attr, "value": shown, "source": f["source_name"], "source_url": f["source_url"],
+                        "as_of": f.get("as_of")})
     return applied
 
 

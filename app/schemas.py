@@ -190,6 +190,7 @@ class LeadOut(ORMBase):
     created_at: UTCDateTime
     archived_at: Optional[UTCDateTime] = None
     archive_reason: Optional[str] = None
+    tag: Optional[str] = None
     contact_checked_at: Optional[UTCDateTime] = None
     listings_checked_at: Optional[UTCDateTime] = None
     research_note: Optional[str] = None
@@ -226,6 +227,7 @@ class LeadCreate(BaseModel):
 class LeadUpdate(BaseModel):
     """Partial update: only fields present in the body change (property edits included)."""
     status: Optional[str] = None
+    tag: Optional[str] = None               # "" clears the tag
     notes: Optional[str] = None
     next_followup: Optional[UTCDateTime] = None
     property_address: Optional[str] = None

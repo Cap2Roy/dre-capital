@@ -14,6 +14,8 @@ from app.timeutil import iso_utc, utcnow
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
+TAGS = ("needs_focus", "hot", "follow_up", "waiting", "on_hold")
+
 
 @router.get("")
 def list_leads(
@@ -116,6 +118,11 @@ def update_lead(lead_id: str, payload: LeadUpdate, db: Session = Depends(get_db)
             lead.status = LeadStatus(data["status"])
         except ValueError:
             raise HTTPException(400, f"Invalid status: {data['status']}")
+    if "tag" in data:
+        tag = (data["tag"] or "").strip() or None
+        if tag is not None and tag not in TAGS:
+            raise HTTPException(400, f"Tag must be one of: {', '.join(TAGS)}.")
+        lead.tag = tag
     if "notes" in data:
         lead.notes = data["notes"]
     if data.get("next_followup"):
@@ -260,26 +267,23 @@ def _lead_or_404(db: Session, lead_id: str) -> Lead:
     return lead
 
 
-@router.get("/{lead_id}/brief")
-def lead_brief(lead_id: str, db: Session = Depends(get_db)):
-    """Everything the dialer / AI agent needs: value, tax, debt, MLS status, photo, number checks."""
-    from app.services.property_data import brief
-    return brief(db, _lead_or_404(db, lead_id))
-
-
 @router.post("/{lead_id}/property-data")
-def refresh_property_data(lead_id: str, db: Session = Depends(get_db)):
-    """Pull public records, value estimate, and MLS listing from RentCast (up to 3 calls)."""
-    from app.services.property_data import PropertyDataError, brief, enrich
+def refresh_property_data(lead_id: str, request: Request, db: Session = Depends(get_db)):
+    """Fill this property's empty fields from RentCast (when active) and free public sources — Census
+    geocoder, the county parcel layer, the government sale page, Grok on the official record (≈ 5–60 s).
+    Returns the brief plus ``refresh``: what was filled, each value's source, per-source outcomes.
+    502 only when every source failed."""
+    from app.services.property_data import PropertyDataError, brief, refresh
     lead = _lead_or_404(db, lead_id)
+    user = getattr(request.state, "user", None)
     try:
-        enrich(db, lead)
+        result = refresh(db, lead, user.id if user else None)
     except PropertyDataError as exc:
-        db.commit()  # keep usage counter + recorded error
+        db.commit()  # keep the recorded attempt (scan row, errors, RentCast usage)
         raise HTTPException(502, str(exc))
     db.commit()
     db.refresh(lead)
-    return brief(db, lead)
+    return {**brief(db, lead), "refresh": result}
 
 
 @router.get("/{lead_id}/photo")
