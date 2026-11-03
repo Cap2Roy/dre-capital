@@ -636,9 +636,7 @@ def census_facts(t) -> dict:
         not town or town.endswith(" county") or re.search(rf"\b{re.escape(town)}\b", ps._norm(matched)) is not None)
     if not same:
         return {"facts": [], "note": f"Census matched a different address ({matched}) — not used.", "match": None}
-    url = ps.CENSUS_GEOCODER + "?" + "&".join(f"{k}={v}" for k, v in (
-        ("address", re.sub(r"\s+", "+", t.address)), ("benchmark", "Public_AR_Current"), ("vintage", "Current_Current"),
-        ("format", "json")))
+    url = census_url(t)
     facts = []
     if m.get("zip"):
         facts.append(ps._fact("property", "property_zip", m["zip"], src="census", source_name="U.S. Census geocoder",
@@ -647,6 +645,32 @@ def census_facts(t) -> dict:
         facts.append(ps._fact("property", "county", m["county"], src="census", source_name="U.S. Census geocoder",
                               source_url=url, source_kind="government", quote=f"county: {m['county']}", official=True))
     return {"facts": facts, "note": None, "match": m}
+
+
+def census_zip_correction(lead: Lead, t, match: Optional[dict]) -> Optional[dict]:
+    """Replace a source's wrong ZIP with the Census one — only when Census matched this exact street
+    (house number, name, suffix and directional: "Peabody St NW" ≠ "Peabody St NE", "Janie Bird Dr" ≠ "… Ave").
+    The old ZIP is kept in ``zip_corrected_from`` so imports that still carry it find this property."""
+    from app.services.stacking import normalize_address
+    zip_ = (match or {}).get("zip")
+    old = (lead.property_zip or "")[:5]
+    if not zip_ or not old or old == zip_:
+        return None
+    street = (match.get("matched_address") or "").split(",")[0]
+    if normalize_address(street) != normalize_address(t.street):
+        return None
+    lead.zip_corrected_from = lead.zip_corrected_from or lead.property_zip
+    lead.property_zip = zip_
+    return {"field": "property_zip", "value": zip_, "source": "U.S. Census geocoder", "source_url": census_url(t),
+            "corrected_from": old}
+
+
+def census_url(t) -> str:
+    """Link to the Census geocoder query for this address (the source of a Census fact)."""
+    from app.services import property_scan as ps
+    return ps.CENSUS_GEOCODER + "?" + "&".join(f"{k}={v}" for k, v in (
+        ("address", re.sub(r"\s+", "+", t.address)), ("benchmark", "Public_AR_Current"), ("vintage", "Current_Current"),
+        ("format", "json")))
 
 
 def _timed(fn: Callable[[], dict]) -> tuple[Optional[dict], Optional[str], int]:
@@ -770,6 +794,9 @@ def refresh(db: Session, lead: Lead, user_id: Optional[str] = None) -> dict:
 
     # Fill empty lead fields, then the property record where it fits.
     filled = ps.apply_to_lead(lead, facts)
+    corrected = census_zip_correction(lead, t, match)
+    if corrected:
+        filled.append(corrected)
     rec = _record(db, lead)
     best = {fld: f for fld, (_, f) in ps.plan_fill(_Blank(), facts).items()}
     if match:
@@ -804,7 +831,8 @@ def refresh(db: Session, lead: Lead, user_id: Optional[str] = None) -> dict:
                         applied=json.dumps(filled), summary=summary, cost_usd=round(cost, 4),
                         duration_ms=int(seconds * 1000), error="; ".join(errors)[:2000] or None, created_by=user_id)
     db.add(scan)
-    line = (f"Data {utcnow():%Y-%m-%d}: " + (("filled " + "; ".join(f"{a['field']} {a['value']} ({a['source']})" for a in filled))
+    line = (f"Data {utcnow():%Y-%m-%d}: " + (("filled " + "; ".join(f"{a['field']} {a['value']}" + (f" (was {a['corrected_from']})" if a.get("corrected_from") else "")
+                                                   + f" ({a['source']})" for a in filled))
                                              if filled else "nothing new to fill")
             + (f". Still missing: {', '.join(still)}" if still else "") + (f". Cost ${cost:.2f}" if cost else ""))
     kept = [ln for ln in (lead.research_note or "").splitlines() if ln.strip() and not ln.startswith("Data ")]

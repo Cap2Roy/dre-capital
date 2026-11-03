@@ -17,7 +17,7 @@ import re
 from collections import Counter
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app.models import Lead, LeadListMembership, ListType, SourceList
@@ -81,8 +81,8 @@ def get_or_create_lead(
     key = address_key(property_address, property_zip)
     stmt = select(Lead).where(Lead.property_address == property_address)
     if property_zip:
-        stmt = stmt.where(Lead.property_zip == property_zip)
-    lead = db.execute(stmt).scalar_one_or_none()
+        stmt = stmt.where(or_(Lead.property_zip == property_zip, Lead.zip_corrected_from == property_zip))
+    lead = db.execute(stmt).scalars().first()
 
     # Fallback: case-insensitive / loose match on the raw address first, so we
     # don't scan the whole table for the common "123 Main St" vs "123 main st"
@@ -93,14 +93,14 @@ def get_or_create_lead(
             select(Lead).where(Lead.property_address.ilike(pat))
         ).scalars().all()
         for l in candidates:
-            if address_key(l.property_address, l.property_zip) == key:
+            if key in (address_key(l.property_address, l.property_zip), address_key(l.property_address, l.zip_corrected_from)):
                 lead = l
                 break
 
     if lead is None:
         all_leads = db.execute(select(Lead)).scalars().all()
         for l in all_leads:
-            if address_key(l.property_address, l.property_zip) == key:
+            if key in (address_key(l.property_address, l.property_zip), address_key(l.property_address, l.zip_corrected_from)):
                 lead = l
                 break
 

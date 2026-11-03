@@ -19,9 +19,20 @@ The current app version is :data:`CURRENT_VERSION`.
 """
 from __future__ import annotations
 
-CURRENT_VERSION = "3.3.0"
+CURRENT_VERSION = "3.3.1"
 
 VERSIONS: list[dict] = [
+    {
+        "version": "3.3.1",
+        "date": "2026-11-03",
+        "title": "Data check: ZIP corrections",
+        "sections": {
+            "Fixed": [
+                "Refresh property data now corrects a wrong ZIP when the U.S. Census geocoder matches the exact street (house number, name, suffix and direction) — e.g. a county record that mails the owner at the property with another ZIP. The ZIP the source gave is remembered, so the next daily scan still recognizes the property instead of adding it twice.",
+                "Corrected: 3721 Lebow St, Fort Worth → 76106; 1385 Peabody St NW, Washington DC → 20011; 65 Country Club Est → La Center, KY (the USDA listing misspells it 'Le Center').",
+            ],
+        },
+    },
     {
         "version": "3.3.0",
         "date": "2026-11-03",

@@ -196,6 +196,9 @@ class Lead(TimestampMixin, Base):
     # Archive: hidden from Properties, the call queue, and the dashboard; restorable.
     # Pipeline tag shown on the property's card: needs_focus | hot | follow_up | waiting | on_hold (None = no tag)
     tag: Mapped[Optional[str]] = mapped_column(String(24), nullable=True, index=True)
+    # The ZIP a source gave before the Census geocoder corrected it — imports carrying the old ZIP still
+    # match this property instead of creating a duplicate.
+    zip_corrected_from: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     archived_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("users.id"), nullable=True)
     archive_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

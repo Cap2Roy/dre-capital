@@ -277,7 +277,7 @@ async function refreshPropertyData(leadId, btn) {
     const filled = r.filled || [];
     const missing = (r.missing || []).map(f => f.replace(/_/g, " "));
     const msg = filled.length
-      ? "Filled: " + filled.map(a => `${a.field.replace(/_/g, " ")} ${a.value} (${a.source})`).join("; ")
+      ? "Filled: " + filled.map(a => `${a.field.replace(/_/g, " ")} ${a.value}${a.corrected_from ? ` (corrected from ${a.corrected_from})` : ""} (${a.source})`).join("; ")
       : "Nothing new found in public records";
     toast(msg + (missing.length ? `. Still missing: ${missing.join(", ")}` : ""), filled.length ? "success" : "");
     if (r.scan && typeof onPropertyScanned === "function") onPropertyScanned(r.scan);
