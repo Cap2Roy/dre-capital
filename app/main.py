@@ -67,6 +67,23 @@ def _ensure_default_agents() -> None:
         db.close()
 
 
+def _remove_fabricated_phones() -> None:
+    """Fake numbers the old demo skip trace put on real properties (idempotent; see skiptrace)."""
+    import logging
+    from app.database import SessionLocal
+    from app.services.skiptrace import remove_fabricated_phones
+    db = SessionLocal()
+    try:
+        n = remove_fabricated_phones(db)
+        if n:
+            logging.getLogger("uvicorn.error").info("Removed %d fabricated demo phone numbers", n)
+    except Exception as exc:
+        db.rollback()
+        logging.getLogger("uvicorn.error").warning("Fabricated phone cleanup failed: %s", exc)
+    finally:
+        db.close()
+
+
 def _ensure_government_sources() -> None:
     """Government sale sources on the daily scan plan. Idempotent: re-adds any that are missing, so turn a
     source off (inactive) rather than deleting it."""
@@ -100,6 +117,7 @@ async def lifespan(app: FastAPI):
         logging.getLogger("uvicorn.error").warning("Quo webhook registration timed out; continuing startup")
     _ensure_default_agents()
     _ensure_government_sources()
+    _remove_fabricated_phones()
     scheduler_task = asyncio.create_task(scheduler_loop())
     yield
     scheduler_task.cancel()

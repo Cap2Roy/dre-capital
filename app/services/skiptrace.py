@@ -21,6 +21,8 @@ import hashlib
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import select
+
 from app.models import Lead, Phone, PhoneQuality
 from app.timeutil import utcnow
 
@@ -73,3 +75,37 @@ def mark_opted_out(db: Session, phone: Phone) -> Phone:
 def is_callable(phone: Phone) -> bool:
     """A phone is callable only if not DNC-flagged and not opted out."""
     return not phone.dnc_flagged and not phone.opted_out
+
+
+def _v30_mock_numbers(lead: Lead) -> set[str]:
+    """Exactly the numbers the pre-3.1 mock skip trace produced for this lead (same algorithm)."""
+    seed = lead.owner_name or lead.property_address
+    h = hashlib.sha256(seed.encode()).digest()
+    out = set()
+    for i in range(5):   # it produced 2–5; the first five cover every count
+        npa, nxx = 200 + (h[i] % 600), 200 + (h[i + 1] % 600)
+        out.add(f"+1{npa}{nxx}{(h[i + 2] * 7 + i * 31) % 10000:04d}")
+    return out
+
+
+def remove_fabricated_phones(db: Session) -> int:
+    """Delete fake numbers the old mock skip trace attached to real properties (v3.0's 'Skip Trace Now').
+
+    Only rows with no source whose number is exactly what that mock generated for the lead's owner;
+    a number already used for a call / text / AI call is kept but labeled ``demo``. Idempotent.
+    """
+    from app.models import AiCall, Call, MessageLog
+    removed = 0
+    for p in db.execute(select(Phone).where(Phone.source.is_(None))).scalars().all():
+        lead = db.get(Lead, p.lead_id)
+        if lead is None or p.number not in _v30_mock_numbers(lead):
+            continue
+        used = any(db.execute(select(m.id).where(m.phone_id == p.id).limit(1)).first() for m in (Call, MessageLog, AiCall))
+        if used:
+            p.source, p.note = "demo", "Fake number from the old demo skip trace — not a real contact."
+            p.quality = PhoneQuality.BAD
+        else:
+            db.delete(p)
+            removed += 1
+    db.commit()
+    return removed

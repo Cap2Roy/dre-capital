@@ -37,6 +37,9 @@ VERSIONS: list[dict] = [
                 "Numbers are marked 'DNC not checked' until a skip-trace provider scrubs them; AI calls need a real DNC scrub. The old demo skip trace can no longer create numbers for real properties.",
                 "Scan property only trusts sources the search engine actually returned (or that we re-read and confirmed), so a made-up web address can't become a source.",
             ],
+            "Fixed": [
+                "Removed fake phone numbers that the old demo skip trace ('Skip Trace Now') had attached to 3 real properties; the demo generator can no longer run on real data.",
+            ],
         },
     },
     {
